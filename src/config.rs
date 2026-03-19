@@ -12,6 +12,7 @@ pub struct DockctlConfig {
     pub general: GeneralConfig,
     pub keybindings: KeybindingsConfig,
     pub layout: LayoutConfig,
+    pub columns: ColumnsConfig,
 }
 
 impl Default for DockctlConfig {
@@ -20,6 +21,7 @@ impl Default for DockctlConfig {
             general: GeneralConfig::default(),
             keybindings: KeybindingsConfig::default(),
             layout: LayoutConfig::default(),
+            columns: ColumnsConfig::default(),
         }
     }
 }
@@ -95,9 +97,62 @@ pub struct LayoutConfig {
 impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
-            left_panel_percent: 30,
+            left_panel_percent: 22,
             preview_split_percent: 60,
             logs_position: "bottom".to_string(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ColumnsConfig — configurable columns per panel
+// ---------------------------------------------------------------------------
+
+/// Defines which columns are shown in each right-panel table.
+/// Users can reorder or remove columns via config. Left/Right arrows
+/// scroll through columns when the table is wider than the terminal.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct ColumnsConfig {
+    pub containers: Vec<String>,
+    pub images: Vec<String>,
+    pub volumes: Vec<String>,
+    pub networks: Vec<String>,
+}
+
+impl Default for ColumnsConfig {
+    fn default() -> Self {
+        Self {
+            containers: vec![
+                "Name".into(),
+                // "Image".into(),
+                "State".into(),
+                "Ports".into(),
+                "CPU".into(),
+                "Memory".into(),
+                "ID".into(),
+                "Status".into(),
+            ],
+            images: vec![
+                "Repository".into(),
+                "Tag".into(),
+                "ID".into(),
+                "Size".into(),
+                "Created".into(),
+            ],
+            volumes: vec![
+                "Name".into(),
+                "Driver".into(),
+                "Mountpoint".into(),
+                "Created".into(),
+            ],
+            networks: vec![
+                "Name".into(),
+                "ID".into(),
+                "Driver".into(),
+                "Scope".into(),
+                "Containers".into(),
+            ],
         }
     }
 }
@@ -147,7 +202,7 @@ mod tests {
         assert_eq!(cfg.general.refresh_interval_ms, 1000);
         assert_eq!(cfg.keybindings.stop, "s");
         assert_eq!(cfg.keybindings.search, "/");
-        assert_eq!(cfg.layout.left_panel_percent, 30);
+        assert_eq!(cfg.layout.left_panel_percent, 22);
     }
 
     #[test]
@@ -161,7 +216,7 @@ theme = "dark"
         assert_eq!(cfg.general.default_runtime, "auto");
         assert_eq!(cfg.general.refresh_interval_ms, 1000);
         assert_eq!(cfg.keybindings.restart, "r");
-        assert_eq!(cfg.layout.left_panel_percent, 30);
+        assert_eq!(cfg.layout.left_panel_percent, 22);
     }
 
     #[test]

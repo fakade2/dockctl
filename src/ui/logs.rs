@@ -6,11 +6,11 @@ use ratatui::{
     Frame,
 };
 
-use crate::ui::titled_block;
+use crate::ui::panel_block;
 
 /// Renders a scrollable log viewer panel.
 pub fn draw_logs(area: Rect, frame: &mut Frame, lines: &[String]) {
-    let block = titled_block("Logs");
+    let block = panel_block("Logs", 0, false);
     let inner_height = block.inner(area).height as usize;
 
     let styled_lines: Vec<Line> = lines

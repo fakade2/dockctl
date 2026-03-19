@@ -41,7 +41,7 @@ pub fn draw_pod_list(frame: &mut Frame, area: Rect, app: &App, is_focused: bool)
                 _ => Color::White,
             };
 
-            let style = if i == app.selected_index {
+            let style = if i == app.selected_index() {
                 Style::default()
                     .bg(Color::DarkGray)
                     .add_modifier(Modifier::BOLD)
@@ -71,7 +71,7 @@ pub fn draw_pod_list(frame: &mut Frame, area: Rect, app: &App, is_focused: bool)
         ],
     )
     .header(header)
-    .block(panel_block(&title, is_focused))
+    .block(panel_block(&title, 0, is_focused))
     .row_highlight_style(
         Style::default()
             .bg(Color::DarkGray)
@@ -84,7 +84,7 @@ pub fn draw_pod_list(frame: &mut Frame, area: Rect, app: &App, is_focused: bool)
 // ─── Unsupported runtime notice ──────────────────────────────────────────────
 
 fn draw_unsupported(frame: &mut Frame, area: Rect, is_focused: bool) {
-    let block = panel_block("Pods", is_focused);
+    let block = panel_block("Pods", 0, is_focused);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

@@ -1,465 +1,210 @@
-use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
-    text::{Line, Span},
-    widgets::{Cell, Paragraph, Row, Table, Wrap},
-    Frame,
-};
+use crate::app::{Alert, AlertLevel, App};
+use crate::runtime::{ContainerDetail, ContainerSummary, ImageSummary, NetworkSummary, VolumeSummary};
+use crate::ui::{container_display_name, format_bytes, format_ports, format_timestamp_age, short_id};
 
-use crate::app::App;
-use crate::config::LayoutConfig;
-use crate::ui::{
-    container_display_name, draw_placeholder, format_bytes, format_ports, format_timestamp_age,
-    logs, panel_block, stats,
-};
+// ─── Popup content helpers (return Vec<String> for use with App::open_popup) ─
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/// Section header line for preview panels — bold cyan, like " [Info]".
-fn section_header(title: &str) -> Line<'static> {
-    Line::from(Span::styled(
-        format!(" [{}]", title),
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ))
+/// Detail lines for an alert (shown in the explain popup).
+pub fn alert_detail_lines(alert: &Alert) -> Vec<String> {
+    let level = match alert.level {
+        AlertLevel::Warning => "Warning",
+        AlertLevel::Critical => "CRITICAL",
+    };
+    vec![
+        format!("Level:   {}", level),
+        format!("Message: {}", alert.message),
+    ]
 }
 
-/// Key-value line for preview detail — left-aligned key, then value.
-fn kv_line(key: &str, value: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(
-            format!("  {:<12} ", key),
-            Style::default().fg(Color::DarkGray).bold(),
-        ),
-        Span::styled(value.to_string(), Style::default().fg(Color::White)),
-    ])
-}
-
-/// Returns the first 12 characters of an ID string.
-fn short_id(id: &str) -> String {
-    let stripped = id.strip_prefix("sha256:").unwrap_or(id);
-    stripped.chars().take(12).collect()
-}
-
-// ─── Status preview ──────────────────────────────────────────────────────────
-
-/// Right-side preview for the Status panel: shows a table of running containers.
-pub fn draw_status_preview(frame: &mut Frame, area: Rect, app: &App, is_focused: bool) {
-    let running: Vec<_> = app
-        .containers
-        .iter()
-        .filter(|c| c.state == "running")
-        .collect();
-
-    if running.is_empty() {
-        draw_placeholder(frame, area, "No running containers");
-        return;
+/// Detail lines for the Resources panel (counters for containers, images, etc.).
+pub fn resource_detail_lines(app: &App, selected: usize) -> Vec<String> {
+    match selected {
+        0 => {
+            let total = app.containers.len();
+            let running = app.containers.iter().filter(|c| c.state == "running").count();
+            let stopped = total - running;
+            vec![
+                "Containers".to_string(),
+                format!("  Total:   {}", total),
+                format!("  Running: {}", running),
+                format!("  Stopped: {}", stopped),
+            ]
+        }
+        1 => {
+            let total = app.images.len();
+            let dangling = app.dangling_images_count;
+            vec![
+                "Images".to_string(),
+                format!("  Total:    {}", total),
+                format!("  Dangling: {}", dangling),
+            ]
+        }
+        2 => {
+            vec![
+                "Volumes".to_string(),
+                format!("  Total: {}", app.volumes.len()),
+            ]
+        }
+        3 => {
+            vec![
+                "Networks".to_string(),
+                format!("  Total: {}", app.networks.len()),
+            ]
+        }
+        _ => vec!["No detail available".to_string()],
     }
-
-    let header = Row::new(vec![
-        Cell::from(" Name").style(Style::default().fg(Color::Cyan).bold()),
-        Cell::from("Image").style(Style::default().fg(Color::Cyan).bold()),
-        Cell::from("Status").style(Style::default().fg(Color::Cyan).bold()),
-        Cell::from("Ports").style(Style::default().fg(Color::Cyan).bold()),
-    ])
-    .height(1)
-    .bottom_margin(1);
-
-    let rows: Vec<Row> = running
-        .iter()
-        .map(|c| {
-            Row::new(vec![
-                Cell::from(format!(" {}", container_display_name(&c.names)))
-                    .style(Style::default().fg(Color::White)),
-                Cell::from(c.image.clone()).style(Style::default().fg(Color::DarkGray)),
-                Cell::from(c.status.clone()).style(Style::default().fg(Color::Green)),
-                Cell::from(format_ports(&c.ports)).style(Style::default().fg(Color::DarkGray)),
-            ])
-        })
-        .collect();
-
-    let title = format!("Overview — Running ({})", running.len());
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(25),
-            Constraint::Percentage(30),
-            Constraint::Percentage(20),
-            Constraint::Percentage(25),
-        ],
-    )
-    .header(header)
-    .block(panel_block(&title, is_focused));
-
-    frame.render_widget(table, area);
 }
 
-// ─── Container preview ───────────────────────────────────────────────────────
-
-/// Right-side preview for the Containers panel.
-///
-/// If `detail_container` is loaded, shows a vertical split with detail on top
-/// and logs + stats side-by-side on the bottom. Otherwise shows a summary of
-/// the selected container from the list.
-pub fn draw_container_preview(
-    frame: &mut Frame,
-    area: Rect,
-    app: &App,
-    is_focused: bool,
-    layout: &LayoutConfig,
-) {
-    if let Some(detail) = &app.detail_container {
-        let has_bottom = !app.log_lines.is_empty() || app.stats.is_some();
-
-        let vert_chunks = if has_bottom {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Percentage(layout.preview_split_percent),
-                    Constraint::Percentage(100 - layout.preview_split_percent),
-                ])
-                .split(area)
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(100)])
-                .split(area)
-        };
-
-        // Top: container detail
-        draw_container_detail(frame, vert_chunks[0], detail, app, is_focused);
-
-        // Bottom: logs + stats side by side
-        if has_bottom {
-            let bottom = vert_chunks[1];
-            let has_logs = !app.log_lines.is_empty();
-            let has_stats = app.stats.is_some();
-
-            if has_logs && has_stats {
-                let bottom_split = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-                    .split(bottom);
-                logs::draw_logs(bottom_split[0], frame, &app.log_lines);
-                if let Some(ref s) = app.stats {
-                    stats::draw_stats(bottom_split[1], frame, s);
-                }
-            } else if has_logs {
-                logs::draw_logs(bottom, frame, &app.log_lines);
-            } else if let Some(ref s) = app.stats {
-                stats::draw_stats(bottom, frame, s);
-            }
+/// Detail lines for the Status panel (system-level information).
+pub fn status_detail_lines(app: &App, selected: usize) -> Vec<String> {
+    if let Some(info) = &app.system_info {
+        match selected {
+            0 => vec![
+                "CPU".to_string(),
+                format!("  Cores: {}", info.cpus),
+                format!("  Arch:  {}", info.arch),
+            ],
+            1 => vec![
+                "Memory".to_string(),
+                format!("  Total: {}", format_bytes(info.memory_total)),
+            ],
+            2 => vec![
+                "System".to_string(),
+                format!("  Runtime: {} {}", info.runtime_type, info.server_version),
+                format!("  OS:      {}", info.os),
+                format!("  Kernel:  {}", info.kernel_version),
+                format!("  Storage: {}", info.storage_driver),
+            ],
+            _ => vec!["No detail available".to_string()],
         }
     } else {
-        // No detail loaded — show summary from the list
-        draw_container_summary(frame, area, app, is_focused);
+        vec!["System info not available".to_string()]
     }
 }
 
-/// Renders container detail info (name, ID, image, state, env, labels).
-fn draw_container_detail(
-    frame: &mut Frame,
-    area: Rect,
-    detail: &crate::runtime::ContainerDetail,
-    app: &App,
-    is_focused: bool,
-) {
-    let block = panel_block("Container Detail", is_focused);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+/// Full detail lines for a container (from ContainerDetail).
+pub fn container_detail_lines(detail: &ContainerDetail) -> Vec<String> {
+    let mut lines = vec![
+        format!("Name:       {}", detail.name),
+        format!("ID:         {}", short_id(&detail.id)),
+        format!("Image:      {}", detail.image),
+        format!("State:      {}", detail.state.status),
+        format!("PID:        {}", detail.state.pid),
+        format!("Created:    {}", detail.created),
+        format!("Restarts:   {}", detail.restart_count),
+        format!("Driver:     {}", detail.driver),
+        format!("Platform:   {}", detail.platform),
+        format!("Log path:   {}", detail.log_path),
+        String::new(),
+    ];
 
-    let mut lines: Vec<Line> = Vec::new();
-
-    // Basic info
-    lines.push(section_header("Info"));
-    lines.push(kv_line("Name", &detail.name));
-    lines.push(kv_line("ID", &short_id(&detail.id)));
-    lines.push(kv_line("Image", &detail.image));
-    lines.push(kv_line("State", &detail.state.status));
-    lines.push(kv_line("PID", &detail.state.pid.to_string()));
-    lines.push(kv_line("Created", &detail.created));
-    lines.push(Line::default());
-
-    // Command
     let full_cmd = if detail.args.is_empty() {
         detail.path.clone()
     } else {
         format!("{} {}", detail.path, detail.args.join(" "))
     };
-    lines.push(section_header("Command"));
-    lines.push(Line::from(Span::styled(
-        format!("  {}", full_cmd),
-        Style::default().fg(Color::White),
-    )));
-    lines.push(Line::default());
+    lines.push(format!("Command:    {}", full_cmd));
+    lines.push(String::new());
 
-    // State details
-    lines.push(section_header("State"));
-    lines.push(kv_line(
-        "Running",
-        if detail.state.running { "yes" } else { "no" },
-    ));
-    lines.push(kv_line(
-        "Paused",
-        if detail.state.paused { "yes" } else { "no" },
-    ));
-    lines.push(kv_line("ExitCode", &detail.state.exit_code.to_string()));
-    lines.push(kv_line("StartedAt", &detail.state.started_at));
-    if !detail.state.finished_at.is_empty()
-        && detail.state.finished_at != "0001-01-01T00:00:00Z"
-    {
-        lines.push(kv_line("FinishedAt", &detail.state.finished_at));
+    lines.push(format!("Running:    {}", if detail.state.running { "yes" } else { "no" }));
+    lines.push(format!("Paused:     {}", if detail.state.paused { "yes" } else { "no" }));
+    lines.push(format!("ExitCode:   {}", detail.state.exit_code));
+    lines.push(format!("StartedAt:  {}", detail.state.started_at));
+    if !detail.state.finished_at.is_empty() && detail.state.finished_at != "0001-01-01T00:00:00Z" {
+        lines.push(format!("FinishedAt: {}", detail.state.finished_at));
     }
-    lines.push(Line::default());
+    lines.push(String::new());
 
-    // Environment variables
     if !detail.env.is_empty() {
-        lines.push(section_header("Environment"));
+        lines.push("[Environment]".to_string());
         for env in &detail.env {
-            lines.push(Line::from(Span::styled(
-                format!("  {}", env),
-                Style::default().fg(Color::White),
-            )));
+            lines.push(format!("  {}", env));
         }
-        lines.push(Line::default());
+        lines.push(String::new());
     }
 
-    // Labels
     if !detail.labels.is_empty() {
-        lines.push(section_header("Labels"));
+        lines.push("[Labels]".to_string());
         for (k, v) in &detail.labels {
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {}", k), Style::default().fg(Color::Yellow)),
-                Span::styled("=", Style::default().fg(Color::DarkGray)),
-                Span::styled(v.to_string(), Style::default().fg(Color::White)),
-            ]));
+            lines.push(format!("  {}={}", k, v));
         }
     }
 
-    let paragraph = Paragraph::new(lines)
-        .scroll((app.preview_scroll, 0))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, inner);
+    lines
 }
 
-/// Renders a brief summary for the selected container (when no detail is loaded).
-fn draw_container_summary(frame: &mut Frame, area: Rect, app: &App, is_focused: bool) {
-    let block = panel_block("Container Preview", is_focused);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+/// Brief summary lines for a container (from ContainerSummary).
+pub fn container_summary_lines(c: &ContainerSummary) -> Vec<String> {
+    vec![
+        format!("Name:   {}", container_display_name(&c.names)),
+        format!("Image:  {}", c.image),
+        format!("State:  {}", c.state),
+        format!("Status: {}", c.status),
+        format!("Ports:  {}", format_ports(&c.ports)),
+    ]
+}
 
-    let lines: Vec<Line> = if let Some(c) = app.containers.get(app.selected_index) {
-        vec![
-            Line::default(),
-            kv_line("Name", &container_display_name(&c.names)),
-            kv_line("Image", &c.image),
-            kv_line("State", &c.state),
-            kv_line("Status", &c.status),
-            kv_line("Ports", &format_ports(&c.ports)),
-        ]
+/// Detail lines for an image.
+pub fn image_detail_lines(img: &ImageSummary) -> Vec<String> {
+    let repo_tags = if img.repo_tags.is_empty() {
+        "<none>:<none>".to_string()
     } else {
-        vec![Line::from(Span::styled(
-            " No items",
-            Style::default().fg(Color::DarkGray).italic(),
-        ))]
+        img.repo_tags.join(", ")
     };
 
-    let paragraph = Paragraph::new(lines);
-    frame.render_widget(paragraph, inner);
-}
+    let mut lines = vec![
+        format!("Tags:    {}", repo_tags),
+        format!("ID:      {}", short_id(&img.id)),
+        format!("Size:    {}", format_bytes(img.size)),
+        format!("Created: {}", format_timestamp_age(img.created)),
+        String::new(),
+    ];
 
-// ─── Image preview ───────────────────────────────────────────────────────────
-
-/// Right-side preview for the Images panel: shows details for the selected image.
-pub fn draw_image_preview(frame: &mut Frame, area: Rect, app: &App, is_focused: bool) {
-    let block = panel_block("Image Preview", is_focused);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let lines: Vec<Line> = if let Some(img) = app.images.get(app.selected_index) {
-        let repo_tags = if img.repo_tags.is_empty() {
-            "<none>:<none>".to_string()
-        } else {
-            img.repo_tags.join(", ")
-        };
-
-        let mut l = vec![
-            Line::default(),
-            section_header("Image"),
-            kv_line("Tags", &repo_tags),
-            kv_line("ID", &short_id(&img.id)),
-            kv_line("Size", &format_bytes(img.size)),
-            kv_line("Created", &format_timestamp_age(img.created)),
-            Line::default(),
-        ];
-
-        if !img.repo_digests.is_empty() {
-            l.push(section_header("Digests"));
-            for digest in &img.repo_digests {
-                l.push(Line::from(Span::styled(
-                    format!("  {}", digest),
-                    Style::default().fg(Color::White),
-                )));
-            }
-            l.push(Line::default());
+    if !img.repo_digests.is_empty() {
+        lines.push("[Digests]".to_string());
+        for digest in &img.repo_digests {
+            lines.push(format!("  {}", digest));
         }
-
-        if !img.labels.is_empty() {
-            l.push(section_header("Labels"));
-            for (k, v) in &img.labels {
-                l.push(Line::from(vec![
-                    Span::styled(format!("  {}", k), Style::default().fg(Color::Yellow)),
-                    Span::styled("=", Style::default().fg(Color::DarkGray)),
-                    Span::styled(v.to_string(), Style::default().fg(Color::White)),
-                ]));
-            }
-        }
-
-        l
-    } else {
-        vec![Line::from(Span::styled(
-            " No items",
-            Style::default().fg(Color::DarkGray).italic(),
-        ))]
-    };
-
-    let paragraph = Paragraph::new(lines)
-        .scroll((app.preview_scroll, 0))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, inner);
-}
-
-// ─── Volume preview ──────────────────────────────────────────────────────────
-
-/// Right-side preview for the Volumes panel: shows details for the selected volume.
-pub fn draw_volume_preview(frame: &mut Frame, area: Rect, app: &App, is_focused: bool) {
-    let block = panel_block("Volume Preview", is_focused);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let lines: Vec<Line> = if let Some(vol) = app.volumes.get(app.selected_index) {
-        vec![
-            Line::default(),
-            section_header("Volume"),
-            kv_line("Name", &vol.name),
-            kv_line("Driver", &vol.driver),
-            kv_line("Mountpoint", &vol.mountpoint),
-            kv_line("Created", &vol.created_at),
-        ]
-    } else {
-        vec![Line::from(Span::styled(
-            " No items",
-            Style::default().fg(Color::DarkGray).italic(),
-        ))]
-    };
-
-    let paragraph = Paragraph::new(lines)
-        .scroll((app.preview_scroll, 0))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, inner);
-}
-
-// ─── Network preview ─────────────────────────────────────────────────────────
-
-/// Right-side preview for the Networks panel: shows details for the selected network.
-pub fn draw_network_preview(frame: &mut Frame, area: Rect, app: &App, is_focused: bool) {
-    let block = panel_block("Network Preview", is_focused);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let lines: Vec<Line> = if let Some(net) = app.networks.get(app.selected_index) {
-        let mut l = vec![
-            Line::default(),
-            section_header("Network"),
-            kv_line("Name", &net.name),
-            kv_line("ID", &short_id(&net.id)),
-            kv_line("Driver", &net.driver),
-            kv_line("Scope", &net.scope),
-            Line::default(),
-        ];
-
-        if !net.containers.is_empty() {
-            l.push(section_header("Connected Containers"));
-            for (cid, cname) in &net.containers {
-                l.push(Line::from(vec![
-                    Span::styled(
-                        format!("  {} ", short_id(cid)),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Span::styled(cname.to_string(), Style::default().fg(Color::White)),
-                ]));
-            }
-        }
-
-        l
-    } else {
-        vec![Line::from(Span::styled(
-            " No items",
-            Style::default().fg(Color::DarkGray).italic(),
-        ))]
-    };
-
-    let paragraph = Paragraph::new(lines)
-        .scroll((app.preview_scroll, 0))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, inner);
-}
-
-// ─── Pod preview ─────────────────────────────────────────────────────────────
-
-/// Right-side preview for the Pods panel: shows details for the selected pod.
-pub fn draw_pod_preview(frame: &mut Frame, area: Rect, app: &App, is_focused: bool) {
-    if !app.supports_pods {
-        draw_placeholder(frame, area, "Pods only available with Podman");
-        return;
+        lines.push(String::new());
     }
 
-    let block = panel_block("Pod Preview", is_focused);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let lines: Vec<Line> = if let Some(pod) = app.pods.get(app.selected_index) {
-        let mut l = vec![
-            Line::default(),
-            section_header("Pod"),
-            kv_line("Name", &pod.name),
-            kv_line("ID", &short_id(&pod.id)),
-            kv_line("Status", &pod.status),
-            kv_line("Created", &pod.created),
-            Line::default(),
-        ];
-
-        if !pod.containers.is_empty() {
-            l.push(section_header("Containers"));
-            for cr in &pod.containers {
-                let status_color = match cr.status.as_str() {
-                    "running" | "Running" => Color::Green,
-                    "exited" | "Exited" => Color::Red,
-                    _ => Color::Yellow,
-                };
-                l.push(Line::from(vec![
-                    Span::styled(
-                        format!("  {} ", short_id(&cr.id)),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Span::styled(cr.name.clone(), Style::default().fg(Color::White)),
-                    Span::raw(" "),
-                    Span::styled(cr.status.clone(), Style::default().fg(status_color)),
-                ]));
-            }
+    if !img.labels.is_empty() {
+        lines.push("[Labels]".to_string());
+        for (k, v) in &img.labels {
+            lines.push(format!("  {}={}", k, v));
         }
+    }
 
-        l
-    } else {
-        vec![Line::from(Span::styled(
-            " No items",
-            Style::default().fg(Color::DarkGray).italic(),
-        ))]
-    };
+    lines
+}
 
-    let paragraph = Paragraph::new(lines)
-        .scroll((app.preview_scroll, 0))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, inner);
+/// Detail lines for a volume.
+pub fn volume_detail_lines(vol: &VolumeSummary) -> Vec<String> {
+    vec![
+        format!("Name:       {}", vol.name),
+        format!("Driver:     {}", vol.driver),
+        format!("Mountpoint: {}", vol.mountpoint),
+        format!("Scope:      {}", vol.scope),
+        format!("Created:    {}", vol.created_at),
+    ]
+}
+
+/// Detail lines for a network.
+pub fn network_detail_lines(net: &NetworkSummary) -> Vec<String> {
+    let mut lines = vec![
+        format!("Name:   {}", net.name),
+        format!("ID:     {}", short_id(&net.id)),
+        format!("Driver: {}", net.driver),
+        format!("Scope:  {}", net.scope),
+        String::new(),
+    ];
+
+    if !net.containers.is_empty() {
+        lines.push("[Connected Containers]".to_string());
+        for (cid, cname) in &net.containers {
+            lines.push(format!("  {} {}", short_id(cid), cname));
+        }
+    }
+
+    lines
 }

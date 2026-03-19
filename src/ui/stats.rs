@@ -7,13 +7,13 @@ use ratatui::{
 };
 
 use crate::runtime::ContainerStats;
-use crate::ui::{format_bytes, titled_block};
+use crate::ui::{format_bytes, panel_block};
 
 /// Renders a compact stats panel showing CPU, memory, network, and block I/O
 /// for a single container.
 pub fn draw_stats(area: Rect, frame: &mut Frame, stats: &ContainerStats) {
     let title = format!("Stats: {}", stats.name);
-    let block = titled_block(&title);
+    let block = panel_block(&title, 0, false);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

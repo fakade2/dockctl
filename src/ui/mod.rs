@@ -1,9 +1,11 @@
+pub mod alerts;
 pub mod containers;
 pub mod images;
 pub mod logs;
 pub mod networks;
 pub mod pods;
 pub mod preview;
+pub mod resources;
 pub mod stats;
 pub mod status;
 pub mod volumes;
@@ -12,104 +14,234 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Wrap},
     Frame,
 };
 
-use crate::app::{App, FocusZone, Panel};
-use crate::config::LayoutConfig;
+use crate::app::{App, PanelId};
+use crate::config::DockctlConfig;
 use crate::runtime::PortMapping;
 
 // ─── Public entry point ──────────────────────────────────────────────────────
 
-/// Root render function — splits the screen into two columns (left panel + right
-/// preview) in the lazygit style and delegates rendering to the appropriate
-/// panel and preview modules.
-pub fn draw(frame: &mut Frame, app: &App, layout: &LayoutConfig) {
+/// Root render function — 7-panel layout with left sidebar, right accordion,
+/// bottom status bar, and optional popup overlay.
+pub fn draw(frame: &mut Frame, app: &App, config: &DockctlConfig) {
+    let layout = &config.layout;
+    // 1. Split vertically: main area (fills) + bottom status bar (1 line)
     let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(frame.area());
+
+    let main_area = outer[0];
+    let bar_area = outer[1];
+
+    // 2. Split main area horizontally: left column + right column
+    let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(layout.left_panel_percent),
             Constraint::Percentage(100 - layout.left_panel_percent),
         ])
-        .split(frame.area());
+        .split(main_area);
 
-    let left_area = outer[0];
-    let right_area = outer[1];
+    let left_area = columns[0];
+    let right_area = columns[1];
 
-    let left_focused = app.focus == FocusZone::LeftPanel;
-    let right_focused = app.focus == FocusZone::RightPreview;
+    // 3. Left column: 3 panels stacked equally
+    let left_panels = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+        ])
+        .split(left_area);
 
-    // Route left panel by active_panel
-    match app.active_panel {
-        Panel::Status => status::draw_status_panel(frame, left_area, app, left_focused),
-        Panel::Containers => containers::draw_container_list(frame, left_area, app, left_focused),
-        Panel::Images => images::draw_image_list(frame, left_area, app, left_focused),
-        Panel::Volumes => volumes::draw_volume_list(frame, left_area, app, left_focused),
-        Panel::Networks => networks::draw_network_list(frame, left_area, app, left_focused),
-        Panel::Pods => pods::draw_pod_list(frame, left_area, app, left_focused),
-    }
+    alerts::draw_alerts_panel(
+        frame,
+        left_panels[0],
+        app,
+        app.active_panel == PanelId::Alerts,
+    );
+    resources::draw_resources_panel(
+        frame,
+        left_panels[1],
+        app,
+        app.active_panel == PanelId::Resources,
+    );
+    status::draw_status_panel(
+        frame,
+        left_panels[2],
+        app,
+        app.active_panel == PanelId::Status,
+    );
 
-    // Route right preview by active_panel
-    match app.active_panel {
-        Panel::Status => preview::draw_status_preview(frame, right_area, app, right_focused),
-        Panel::Containers => {
-            preview::draw_container_preview(frame, right_area, app, right_focused, layout)
-        }
-        Panel::Images => preview::draw_image_preview(frame, right_area, app, right_focused),
-        Panel::Volumes => preview::draw_volume_preview(frame, right_area, app, right_focused),
-        Panel::Networks => preview::draw_network_preview(frame, right_area, app, right_focused),
-        Panel::Pods => preview::draw_pod_preview(frame, right_area, app, right_focused),
+    // 4. Right column: accordion layout
+    draw_right_accordion(frame, right_area, app, config);
+
+    // 5. Bottom status bar
+    draw_status_bar(frame, bar_area);
+
+    // 6. Popup overlay (if open)
+    if app.show_popup {
+        draw_popup(frame, app);
     }
 }
 
-// ─── Shared helpers ──────────────────────────────────────────────────────────
+/// Renders the right column with accordion behavior: the expanded panel gets
+/// most of the vertical space, collapsed panels get just 3 lines (title bar).
+fn draw_right_accordion(frame: &mut Frame, area: Rect, app: &App, config: &DockctlConfig) {
+    let right_panels = PanelId::RIGHT;
+    let expanded = app.expanded_right;
 
-/// Creates a bordered block with a styled title. The border is cyan when
-/// the panel is focused, dark gray otherwise.
-pub(crate) fn panel_block(title: &str, is_focused: bool) -> Block<'_> {
-    let border_color = if is_focused {
-        Color::Cyan
-    } else {
-        Color::DarkGray
-    };
-    Block::default()
-        .title(format!(" {} ", title))
+    // Build constraints: expanded gets Min(8), collapsed get Length(3)
+    let constraints: Vec<Constraint> = right_panels
+        .iter()
+        .map(|&p| {
+            if p == expanded {
+                Constraint::Min(8)
+            } else {
+                Constraint::Length(3)
+            }
+        })
+        .collect();
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+
+    for (i, &panel) in right_panels.iter().enumerate() {
+        let is_expanded = panel == expanded;
+        let is_focused = panel == app.active_panel;
+
+        match panel {
+            PanelId::Containers => {
+                containers::draw_container_panel(frame, chunks[i], app, is_expanded, is_focused, &config.columns.containers);
+            }
+            PanelId::Images => {
+                images::draw_image_panel(frame, chunks[i], app, is_expanded, is_focused, &config.columns.images);
+            }
+            PanelId::Volumes => {
+                volumes::draw_volume_panel(frame, chunks[i], app, is_expanded, is_focused, &config.columns.volumes);
+            }
+            PanelId::Networks => {
+                networks::draw_network_panel(frame, chunks[i], app, is_expanded, is_focused, &config.columns.networks);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Renders the bottom status bar.
+fn draw_status_bar(frame: &mut Frame, area: Rect) {
+    let version = concat!("dockctl v", env!("CARGO_PKG_VERSION"));
+
+    let key_style = Style::default().fg(Color::Cyan);
+    let label_style = Style::default().fg(Color::DarkGray);
+    let sep_style = Style::default().fg(Color::DarkGray);
+
+    let left_spans = vec![
+        Span::styled(" Explain: ", label_style),
+        Span::styled("e", key_style),
+        Span::styled(" | ", sep_style),
+        Span::styled("Quit: ", label_style),
+        Span::styled("q", key_style),
+        Span::styled(" | ", sep_style),
+        Span::styled("Keybindings: ", label_style),
+        Span::styled("?", key_style),
+    ];
+
+    // Calculate padding to right-align the version string
+    let left_len: usize = left_spans.iter().map(|s| s.width()).sum();
+    let right_len = version.len() + 1;
+    let total_width = area.width as usize;
+    let padding = total_width.saturating_sub(left_len + right_len);
+
+    let mut spans = left_spans;
+    spans.push(Span::raw(" ".repeat(padding)));
+    spans.push(Span::styled(
+        format!("{} ", version),
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let line = Line::from(spans);
+    let bar = Paragraph::new(line);
+    frame.render_widget(bar, area);
+}
+
+/// Renders the popup overlay centered on the screen.
+fn draw_popup(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+
+    // 60% width, 70% height, centered
+    let popup_width = (area.width as u32 * 60 / 100) as u16;
+    let popup_height = (area.height as u32 * 70 / 100) as u16;
+    let x = (area.width.saturating_sub(popup_width)) / 2;
+    let y = (area.height.saturating_sub(popup_height)) / 2;
+
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    // Clear the area behind the popup
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(format!(" {} ", app.popup_title))
         .title_style(
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let content_lines: Vec<Line> = app
+        .popup_content
+        .iter()
+        .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(Color::White))))
+        .collect();
+
+    let paragraph = Paragraph::new(content_lines)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .scroll((app.popup_scroll, 0));
+
+    frame.render_widget(paragraph, popup_area);
 }
 
-/// Simple titled block (unfocused variant of `panel_block`).
-pub(crate) fn titled_block(title: &str) -> Block<'_> {
-    panel_block(title, false)
-}
+// ─── Shared helpers ──────────────────────────────────────────────────────────
 
-/// A small section label — renders like " [System]" in bold cyan.
-pub(crate) fn section_label(label: &str) -> Line<'static> {
-    Line::from(Span::styled(
-        format!(" [{}]", label),
+/// Creates a bordered block with a numbered badge in the title.
+/// Example: " [4] Containers (9) "
+/// Number is in brackets, dimmed. Header text is high contrast (white bold when
+/// focused, white when unfocused). Border is cyan when focused, dark gray otherwise.
+pub(crate) fn panel_block(title: &str, number: u8, is_focused: bool) -> Block<'static> {
+    let border_color = if is_focused {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
+
+    let number_style = Style::default().fg(Color::DarkGray);
+    let title_style = if is_focused {
         Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    ))
-}
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Green)
+    };
 
-/// Compact key-value line for sidebar / status panels.
-pub(crate) fn compact_kv(key: &str, value: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(
-            format!(" {} ", key),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(value.to_string(), Style::default().fg(Color::White)),
-    ])
+    let title_line = Line::from(vec![
+        Span::styled(format!(" [{}]", number), number_style),
+        Span::styled(format!(" {} ", title), title_style),
+    ]);
+
+    Block::default()
+        .title(title_line)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color))
 }
 
 /// Formats a byte count into a human-readable string (e.g. "1.23 GB").
@@ -140,7 +272,6 @@ pub(crate) fn format_timestamp_age(ts: i64) -> String {
     let hours = diff / 3600;
     let minutes = diff / 60;
     if days > 30 {
-        // Format as absolute date
         chrono::DateTime::from_timestamp(ts, 0)
             .map(|dt| dt.format("%Y-%m-%d").to_string())
             .unwrap_or_else(|| "unknown".to_string())
@@ -164,54 +295,89 @@ pub(crate) fn container_display_name(names: &[String]) -> String {
         .unwrap_or_else(|| "<unnamed>".to_string())
 }
 
-/// Formats a `PortMapping` into a human-readable string like "0.0.0.0:8080->80/tcp".
+/// Formats a `PortMapping` as "source:destination" (e.g. "5432:5432").
+/// Strips protocol, `0.0.0.0`, and `::` — just shows the port numbers.
 pub(crate) fn format_port(pm: &PortMapping) -> String {
-    match (&pm.ip, pm.public_port) {
-        (Some(ip), Some(pub_port)) => {
-            format!("{}:{}->{}/{}", ip, pub_port, pm.private_port, pm.port_type)
-        }
-        (None, Some(pub_port)) => {
-            format!("{}->{}/{}", pub_port, pm.private_port, pm.port_type)
-        }
-        _ => format!("{}/{}", pm.private_port, pm.port_type),
+    match pm.public_port {
+        Some(pub_port) => format!("{}:{}", pub_port, pm.private_port),
+        None => format!("{}", pm.private_port),
     }
 }
 
-/// Formats a list of port mappings into a single comma-separated string.
+/// Formats a list of port mappings into a deduplicated, sorted, comma-separated string.
+/// Docker/bollard returns duplicate entries (IPv4 + IPv6, per protocol), so we deduplicate.
 pub(crate) fn format_ports(ports: &[PortMapping]) -> String {
     if ports.is_empty() {
         return String::new();
     }
-    ports
+    let mut formatted: Vec<String> = ports
         .iter()
+        .filter(|p| p.public_port.is_some()) // only show mapped ports
         .map(format_port)
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect();
+    formatted.sort();
+    formatted.dedup();
+    formatted.join(", ")
 }
 
-/// Renders a centered placeholder message for views with no content.
-pub(crate) fn draw_placeholder(frame: &mut Frame, area: Rect, message: &str) {
-    let block = titled_block(message);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+/// Minimum column width for table rendering.
+pub(crate) const MIN_TABLE_COLUMN_WIDTH: u16 = 12;
 
-    // Vertically center
-    let v_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(45),
-            Constraint::Length(3),
-            Constraint::Percentage(45),
-        ])
-        .split(inner);
+/// How many columns fit in the given width.
+pub(crate) fn visible_column_count(width: u16, total: usize) -> usize {
+    let usable = width.saturating_sub(2);
+    let max_fit = (usable / MIN_TABLE_COLUMN_WIDTH) as usize;
+    max_fit.min(total).max(1)
+}
 
-    let text = Paragraph::new(Line::from(vec![Span::styled(
-        message.to_string(),
+/// Style for a selected row in a table.
+pub(crate) fn selected_row_style(is_focused: bool, is_selected: bool) -> Style {
+    if is_focused && is_selected {
+        Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+    } else {
         Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::ITALIC),
-    )]))
-    .centered();
+    }
+}
 
-    frame.render_widget(text, v_layout[1]);
+/// Format a scroll indicator like " [1-4/8]".
+pub(crate) fn format_scroll_hint(start: usize, visible: usize, total: usize) -> String {
+    if total > visible {
+        format!(" [{}-{}/{}]", start + 1, (start + visible).min(total), total)
+    } else {
+        String::new()
+    }
+}
+
+/// Create a table header row from column names.
+pub(crate) fn create_table_header(columns: &[String]) -> Row<'static> {
+    let cells: Vec<Cell> = columns
+        .iter()
+        .map(|c| Cell::from(format!(" {}", c)).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+        .collect();
+    Row::new(cells).height(1).bottom_margin(1)
+}
+
+/// Truncate a Docker/Podman ID, stripping sha256: prefix.
+pub(crate) fn short_id(id: &str) -> String {
+    id.strip_prefix("sha256:").unwrap_or(id).chars().take(12).collect()
+}
+
+/// Color based on percentage thresholds.
+pub(crate) fn percentage_color(pct: f64) -> Color {
+    if pct > 80.0 {
+        Color::Red
+    } else if pct > 50.0 {
+        Color::Yellow
+    } else {
+        Color::Green
+    }
+}
+
+/// Truncate a string, adding ellipsis if too long.
+pub(crate) fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        return s.to_string();
+    }
+    let keep = (max_len - 3) / 2;
+    format!("{}...{}", &s[..keep], &s[s.len() - keep..])
 }

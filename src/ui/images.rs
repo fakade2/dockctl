@@ -1,82 +1,102 @@
 use ratatui::{
-    layout::Constraint,
-    style::{Color, Modifier, Style, Stylize},
+    layout::{Constraint, Rect},
+    style::{Color, Modifier, Style},
     widgets::{Cell, Row, Table},
     Frame,
-    layout::Rect,
 };
 
-use crate::app::App;
-use crate::ui::{format_bytes, format_timestamp_age, panel_block};
+use crate::app::{App, PanelId};
+use crate::ui::{
+    create_table_header, format_bytes, format_scroll_hint, format_timestamp_age, panel_block,
+    selected_row_style, short_id, visible_column_count,
+};
 
-/// Renders the image list as a table in the left panel.
-pub fn draw_image_list(frame: &mut Frame, area: Rect, app: &App, is_focused: bool) {
-    let header = Row::new(vec![
-        Cell::from(" Repository:Tag").style(Style::default().fg(Color::Cyan).bold()),
-        Cell::from("ID").style(Style::default().fg(Color::Cyan).bold()),
-        Cell::from("Size").style(Style::default().fg(Color::Cyan).bold()),
-        Cell::from("Created").style(Style::default().fg(Color::Cyan).bold()),
-    ])
-    .height(1)
-    .bottom_margin(1);
+/// Renders the Images panel (panel 5, right column).
+/// Columns are configurable and scrollable with Left/Right.
+pub fn draw_image_panel(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    is_expanded: bool,
+    is_focused: bool,
+    columns: &[String],
+) {
+    let count = app.images.len();
+    let title = format!("Images ({})", count);
+
+    if !is_expanded {
+        let block = panel_block(&title, PanelId::Images.number(), is_focused);
+        frame.render_widget(block, area);
+        return;
+    }
+
+    let selected = app.panel_selection(PanelId::Images);
+    let col_offset = app.panel_column_offset(PanelId::Images);
+    let max_visible = visible_column_count(area.width, columns.len());
+    let start = col_offset.min(columns.len().saturating_sub(max_visible));
+    let visible_cols = &columns[start..(start + max_visible).min(columns.len())];
+
+    let header = create_table_header(visible_cols);
 
     let rows: Vec<Row> = app
         .images
         .iter()
         .enumerate()
         .map(|(i, img)| {
-            let repo_tag = if img.repo_tags.is_empty() {
-                "<none>:<none>".to_string()
-            } else {
-                img.repo_tags.join(", ")
-            };
+            let style = selected_row_style(is_focused, i == selected);
 
-            let short_id = short_image_id(&img.id);
-            let size = format_bytes(img.size);
-            let created = format_timestamp_age(img.created);
+            let cells: Vec<Cell> = visible_cols
+                .iter()
+                .map(|col| match col.as_str() {
+                    "Repository" => {
+                        let tag = img.repo_tags.first()
+                            .map(|t| t.split(':').next().unwrap_or(t).to_string())
+                            .unwrap_or_else(|| "<none>".into());
+                        Cell::from(format!(" {}", tag)).style(Style::default().fg(Color::White))
+                    }
+                    "Tag" => {
+                        let tag = img.repo_tags.first()
+                            .and_then(|t| t.split(':').nth(1))
+                            .unwrap_or("<none>");
+                        Cell::from(tag.to_string()).style(Style::default().fg(Color::DarkGray))
+                    }
+                    "ID" => Cell::from(short_id(&img.id))
+                        .style(Style::default().fg(Color::DarkGray)),
+                    "Size" => Cell::from(format_bytes(img.size))
+                        .style(Style::default().fg(Color::Yellow)),
+                    "Created" => Cell::from(format_timestamp_age(img.created))
+                        .style(Style::default().fg(Color::DarkGray)),
+                    _ => Cell::from(""),
+                })
+                .collect();
 
-            let style = if i == app.selected_index {
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-
-            Row::new(vec![
-                Cell::from(format!(" {}", repo_tag)).style(Style::default().fg(Color::White)),
-                Cell::from(short_id).style(Style::default().fg(Color::DarkGray)),
-                Cell::from(size).style(Style::default().fg(Color::Yellow)),
-                Cell::from(created).style(Style::default().fg(Color::DarkGray)),
-            ])
-            .style(style)
+            Row::new(cells).style(style)
         })
         .collect();
 
-    let title = format!("Images ({})", app.images.len());
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(40),
-            Constraint::Percentage(18),
-            Constraint::Percentage(18),
-            Constraint::Percentage(24),
-        ],
-    )
-    .header(header)
-    .block(panel_block(&title, is_focused))
-    .row_highlight_style(
-        Style::default()
-            .bg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD),
-    );
+    let col_widths: Vec<Constraint> = visible_cols
+        .iter()
+        .map(|col| match col.as_str() {
+            "Repository" => Constraint::Percentage(35),
+            "Tag" => Constraint::Percentage(15),
+            "ID" => Constraint::Length(14),
+            "Size" => Constraint::Length(10),
+            "Created" => Constraint::Percentage(18),
+            _ => Constraint::Percentage((100 / visible_cols.len() as u16).max(1)),
+        })
+        .collect();
+
+    let scroll_hint = format_scroll_hint(start, max_visible, columns.len());
+
+    let table = Table::new(rows, col_widths)
+        .header(header)
+        .block(panel_block(
+            &format!("Images ({}){}", count, scroll_hint),
+            PanelId::Images.number(),
+            is_focused,
+        ))
+        .row_highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD));
 
     frame.render_widget(table, area);
 }
 
-/// Returns the first 12 hex characters from a Docker/Podman image ID, stripping
-/// any `sha256:` prefix.
-fn short_image_id(id: &str) -> String {
-    let stripped = id.strip_prefix("sha256:").unwrap_or(id);
-    stripped.chars().take(12).collect()
-}

@@ -19,12 +19,15 @@ use crossterm::{
 use ratatui::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-use crate::app::{Alert, AlertLevel, App, FocusZone, InputMode, Panel};
+use crate::app::{Alert, AlertLevel, App, InputMode, PanelId};
 use crate::event::{AppEvent, EventHandler};
 use crate::runtime::{detect_runtime, RuntimeType};
 use crate::services::{
     ContainerService, ImageService, NetworkService, PodService, SystemService, VolumeService,
 };
+use sysinfo::System;
+
+use crate::ui::preview;
 
 #[derive(Parser, Debug)]
 #[command(name = "dockctl", version, about = "Universal container runtime TUI — Docker & Podman")]
@@ -64,6 +67,11 @@ async fn main() -> Result<()> {
     // Initialize app state
     let mut app = App::new(supports_pods);
 
+    // Initialize sysinfo for host metrics
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    refresh_host_stats(&mut app, &mut sys);
+
     // Initial data load
     load_data(
         &mut app,
@@ -90,7 +98,7 @@ async fn main() -> Result<()> {
     // Main loop
     loop {
         // Draw
-        terminal.draw(|frame| ui::draw(frame, &app, &config.layout))?;
+        terminal.draw(|frame| ui::draw(frame, &app, &config))?;
 
         // Handle events
         match events.next().await? {
@@ -106,117 +114,115 @@ async fn main() -> Result<()> {
                     &system_svc,
                 )
                 .await;
+                refresh_host_stats(&mut app, &mut sys);
                 compute_alerts(&mut app);
             }
             AppEvent::Key(key) => {
+                // ── Popup mode ──────────────────────────────────────────
+                if app.show_popup {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => {
+                            app.close_popup();
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            app.popup_scroll = app.popup_scroll.saturating_add(1);
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            app.popup_scroll = app.popup_scroll.saturating_sub(1);
+                        }
+                        _ => {} // ignore everything else in popup
+                    }
+                    continue;
+                }
+
+                // ── Search mode ─────────────────────────────────────────
                 if app.input_mode == InputMode::Search {
                     handle_search_input(&mut app, key.code);
                     continue;
                 }
 
+                // ── Normal mode ─────────────────────────────────────────
                 match (key.code, key.modifiers) {
                     // Quit
                     (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                         app.should_quit = true;
                     }
 
-                    // Panel switching (1-6) — lazygit style
-                    (KeyCode::Char('1'), _) => app.switch_to_panel(Panel::Status),
-                    (KeyCode::Char('2'), _) => app.switch_to_panel(Panel::Containers),
-                    (KeyCode::Char('3'), _) => app.switch_to_panel(Panel::Images),
-                    (KeyCode::Char('4'), _) => app.switch_to_panel(Panel::Volumes),
-                    (KeyCode::Char('5'), _) => app.switch_to_panel(Panel::Networks),
-                    (KeyCode::Char('6'), _) if supports_pods => {
-                        app.switch_to_panel(Panel::Pods);
+                    // Panel switching (1-7)
+                    (KeyCode::Char(n @ '1'..='7'), _) => {
+                        let num = n as u8 - b'0';
+                        if let Some(panel) = PanelId::from_number(num) {
+                            app.focus_panel(panel);
+                        }
                     }
 
                     // Tab cycles panels
                     (KeyCode::Tab, _) => app.next_panel(),
                     (KeyCode::BackTab, _) => app.previous_panel(),
 
-                    // Focus switching between columns
-                    (KeyCode::Left, _) => {
-                        app.focus = FocusZone::LeftPanel;
-                        app.preview_scroll = 0;
+                    // Vertical navigation within active panel
+                    (KeyCode::Down | KeyCode::Char('j'), _) => app.next_item(),
+                    (KeyCode::Up | KeyCode::Char('k'), _) => app.previous_item(),
+
+                    // Horizontal column scrolling (right panels only)
+                    (KeyCode::Right | KeyCode::Char('l'), _)
+                        if app.active_panel.is_right() =>
+                    {
+                        let max_cols = match app.active_panel {
+                            PanelId::Containers => config.columns.containers.len(),
+                            PanelId::Images => config.columns.images.len(),
+                            PanelId::Volumes => config.columns.volumes.len(),
+                            PanelId::Networks => config.columns.networks.len(),
+                            _ => 0,
+                        };
+                        app.scroll_columns_right(max_cols);
                     }
-                    (KeyCode::Right, _) | (KeyCode::Char('0'), _) => {
-                        app.focus = FocusZone::RightPreview;
-                    }
-                    (KeyCode::Esc, _) => {
-                        app.focus = FocusZone::LeftPanel;
-                        app.preview_scroll = 0;
-                        app.show_detail = false;
-                        app.clear_preview_data();
+                    (KeyCode::Left | KeyCode::Char('h'), _)
+                        if app.active_panel.is_right() =>
+                    {
+                        app.scroll_columns_left();
                     }
 
-                    // Navigation within focused column
-                    (KeyCode::Down | KeyCode::Char('j'), _) => match app.focus {
-                        FocusZone::LeftPanel => app.next_item(),
-                        FocusZone::RightPreview => {
-                            app.preview_scroll = app.preview_scroll.saturating_add(1);
-                        }
-                    },
-                    (KeyCode::Up | KeyCode::Char('k'), _) => match app.focus {
-                        FocusZone::LeftPanel => app.previous_item(),
-                        FocusZone::RightPreview => {
-                            app.preview_scroll = app.preview_scroll.saturating_sub(1);
-                        }
-                    },
+                    // Explain / Enter — open detail popup
+                    (KeyCode::Char('e') | KeyCode::Enter, _)
+                        if app.active_panel != PanelId::Containers
+                            || !matches!(key.code, KeyCode::Char('e')) =>
+                    {
+                        open_explain_popup(&mut app, &container_svc).await;
+                    }
 
-                    // Enter — load full preview data and focus right
-                    (KeyCode::Enter, _) => match app.active_panel {
-                        Panel::Containers => {
-                            if let Some(id) = app.selected_container_id() {
-                                if let Ok(detail) = container_svc.get_detail(&id).await {
-                                    app.detail_container = Some(detail);
-                                }
-                                if let Ok(logs) =
-                                    container_svc.get_logs(&id, Some(100)).await
-                                {
-                                    app.log_lines =
-                                        logs.lines().map(String::from).collect();
-                                }
-                                if let Ok(stats) = container_svc.get_stats(&id).await {
-                                    app.stats = Some(stats);
-                                }
-                                app.show_detail = true;
-                                app.focus = FocusZone::RightPreview;
-                                app.preview_scroll = 0;
-                            }
-                        }
-                        _ => {
-                            app.focus = FocusZone::RightPreview;
-                            app.preview_scroll = 0;
-                        }
-                    },
-
-                    // Container actions (only on Containers panel)
-                    (KeyCode::Char('s'), _) if app.active_panel == Panel::Containers => {
+                    // Container actions (only when active_panel == Containers)
+                    (KeyCode::Char('s'), _) if app.active_panel == PanelId::Containers => {
                         if let Some(id) = app.selected_container_id() {
-                            let _ = container_svc.stop(&id).await;
-                        }
-                    }
-                    (KeyCode::Char('r'), _) if app.active_panel == Panel::Containers => {
-                        if let Some(id) = app.selected_container_id() {
-                            let _ = container_svc.restart(&id).await;
-                        }
-                    }
-                    (KeyCode::Char('x'), _) if app.active_panel == Panel::Containers => {
-                        if let Some(id) = app.selected_container_id() {
-                            let _ = container_svc.remove(&id, true).await;
-                        }
-                    }
-                    (KeyCode::Char('l'), _) if app.active_panel == Panel::Containers => {
-                        if let Some(id) = app.selected_container_id() {
-                            if let Ok(logs) =
-                                container_svc.get_logs(&id, Some(200)).await
-                            {
-                                app.log_lines =
-                                    logs.lines().map(String::from).collect();
+                            if let Err(e) = container_svc.stop(&id).await {
+                                tracing::warn!("Failed to stop container {}: {}", id, e);
                             }
                         }
                     }
-                    (KeyCode::Char('e'), _) if app.active_panel == Panel::Containers => {
+                    (KeyCode::Char('r'), _) if app.active_panel == PanelId::Containers => {
+                        if let Some(id) = app.selected_container_id() {
+                            if let Err(e) = container_svc.restart(&id).await {
+                                tracing::warn!("Failed to restart container {}: {}", id, e);
+                            }
+                        }
+                    }
+                    (KeyCode::Char('x'), _) if app.active_panel == PanelId::Containers => {
+                        if let Some(id) = app.selected_container_id() {
+                            if let Err(e) = container_svc.remove(&id, true).await {
+                                tracing::warn!("Failed to remove container {}: {}", id, e);
+                            }
+                        }
+                    }
+                    (KeyCode::Char('l'), _) if app.active_panel == PanelId::Containers => {
+                        // Reserved for logs
+                    }
+                    (KeyCode::Char('e'), _) if app.active_panel == PanelId::Containers => {
+                        // 'e' on Containers panel — open explain popup
+                        open_explain_popup(&mut app, &container_svc).await;
+                    }
+
+                    // Tmux exec: Shift+E (capital E) — only on Containers panel
+                    (KeyCode::Char('E'), _) if app.active_panel == PanelId::Containers => {
                         if let Some(id) = app.selected_container_id() {
                             if tmux::is_tmux_available() {
                                 let bin = match runtime.runtime_type() {
@@ -224,7 +230,9 @@ async fn main() -> Result<()> {
                                     RuntimeType::Podman => "podman",
                                 };
                                 let tmux_int = tmux::TmuxIntegration::new(bin);
-                                let _ = tmux_int.split_pane_exec(&id, "/bin/sh").await;
+                                if let Err(e) = tmux_int.split_pane_exec(&id, "/bin/sh").await {
+                                    tracing::warn!("Failed to exec into container {}: {}", id, e);
+                                }
                             }
                         }
                     }
@@ -233,6 +241,46 @@ async fn main() -> Result<()> {
                     (KeyCode::Char('/'), _) => {
                         app.input_mode = InputMode::Search;
                         app.search_query.clear();
+                    }
+
+                    // Keybindings help
+                    (KeyCode::Char('?'), _) => {
+                        app.open_popup(
+                            "Keybindings".to_string(),
+                            vec![
+                                "Navigation".to_string(),
+                                "─────────────────────────────".to_string(),
+                                "1-7          Focus panel".to_string(),
+                                "Tab          Next panel".to_string(),
+                                "Shift+Tab    Previous panel".to_string(),
+                                "j / ↓        Move down".to_string(),
+                                "k / ↑        Move up".to_string(),
+                                "h / ←        Scroll columns left".to_string(),
+                                "l / →        Scroll columns right".to_string(),
+                                String::new(),
+                                "Actions".to_string(),
+                                "─────────────────────────────".to_string(),
+                                "e / Enter    Explain (detail popup)".to_string(),
+                                "q            Quit (or close popup)".to_string(),
+                                "/            Search".to_string(),
+                                "?            This help".to_string(),
+                                String::new(),
+                                "Container Actions (panel 4)".to_string(),
+                                "─────────────────────────────".to_string(),
+                                "s            Stop container".to_string(),
+                                "r            Restart container".to_string(),
+                                "x            Remove container".to_string(),
+                                "l            View logs".to_string(),
+                                "E            Exec into container (tmux)".to_string(),
+                            ],
+                        );
+                    }
+
+                    // Esc in normal mode — clear search
+                    (KeyCode::Esc, _) => {
+                        if !app.search_query.is_empty() {
+                            app.search_query.clear();
+                        }
                     }
 
                     _ => {}
@@ -254,6 +302,68 @@ async fn main() -> Result<()> {
     terminal.show_cursor()?;
 
     Ok(())
+}
+
+/// Open the explain/detail popup for the currently selected item in the active panel.
+async fn open_explain_popup(app: &mut App, container_svc: &ContainerService) {
+    match app.active_panel {
+        PanelId::Alerts => {
+            if let Some(alert) = app.alerts.get(app.selected_index()) {
+                app.open_popup(
+                    "Alert Detail".to_string(),
+                    preview::alert_detail_lines(alert),
+                );
+            }
+        }
+        PanelId::Resources => {
+            app.open_popup(
+                "Resource Detail".to_string(),
+                preview::resource_detail_lines(&app, app.selected_index()),
+            );
+        }
+        PanelId::Status => {
+            app.open_popup(
+                "Status Detail".to_string(),
+                preview::status_detail_lines(&app, app.selected_index()),
+            );
+        }
+        PanelId::Containers => {
+            if let Some(id) = app.selected_container_id() {
+                let lines = if let Ok(detail) = container_svc.get_detail(&id).await {
+                    preview::container_detail_lines(&detail)
+                } else if let Some(c) = app.containers.get(app.selected_index()) {
+                    preview::container_summary_lines(c)
+                } else {
+                    vec!["No container selected".to_string()]
+                };
+                app.open_popup("Container Detail".to_string(), lines);
+            }
+        }
+        PanelId::Images => {
+            if let Some(img) = app.images.get(app.selected_index()) {
+                app.open_popup(
+                    "Image Detail".to_string(),
+                    preview::image_detail_lines(img),
+                );
+            }
+        }
+        PanelId::Volumes => {
+            if let Some(vol) = app.volumes.get(app.selected_index()) {
+                app.open_popup(
+                    "Volume Detail".to_string(),
+                    preview::volume_detail_lines(vol),
+                );
+            }
+        }
+        PanelId::Networks => {
+            if let Some(net) = app.networks.get(app.selected_index()) {
+                app.open_popup(
+                    "Network Detail".to_string(),
+                    preview::network_detail_lines(net),
+                );
+            }
+        }
+    }
 }
 
 /// Load all data for all panels (used at startup).
@@ -286,6 +396,18 @@ async fn load_data(
     if let Ok(info) = system_svc.info().await {
         app.system_info = Some(info);
     }
+}
+
+/// Refresh host-level CPU, memory, and swap stats from the OS.
+fn refresh_host_stats(app: &mut App, sys: &mut System) {
+    sys.refresh_cpu_all();
+    sys.refresh_memory();
+
+    app.host_cpu_percent = sys.global_cpu_usage() as f64;
+    app.host_memory_used = sys.used_memory();
+    app.host_memory_total = sys.total_memory();
+    app.host_swap_used = sys.used_swap();
+    app.host_swap_total = sys.total_swap();
 }
 
 /// Compute alerts based on current app state.
@@ -353,11 +475,12 @@ async fn load_panel_data(
     image_svc: &ImageService,
     volume_svc: &VolumeService,
     network_svc: &NetworkService,
-    pod_svc: &PodService,
+    _pod_svc: &PodService,
     system_svc: &SystemService,
 ) {
     match app.active_panel {
-        Panel::Status => {
+        PanelId::Alerts | PanelId::Resources | PanelId::Status => {
+            // Refresh system info and counts
             if let Ok(containers) = container_svc.list_all().await {
                 app.containers = containers;
             }
@@ -365,42 +488,38 @@ async fn load_panel_data(
                 app.system_info = Some(info);
             }
         }
-        Panel::Containers => {
+        PanelId::Containers => {
             if let Ok(containers) = container_svc.list_all().await {
                 app.containers = containers;
             }
-            // Refresh stats and logs if detail is open
-            if app.show_detail {
-                if let Some(id) = app.selected_container_id() {
-                    if let Ok(stats) = container_svc.get_stats(&id).await {
-                        app.stats = Some(stats);
-                    }
-                    if let Ok(logs) = container_svc.get_logs(&id, Some(100)).await {
-                        app.log_lines = logs.lines().map(String::from).collect();
-                    }
+            // Fetch stats for running containers (limit to avoid overloading)
+            let running: Vec<String> = app
+                .containers
+                .iter()
+                .filter(|c| c.state == "running")
+                .take(20) // cap to avoid too many API calls per tick
+                .map(|c| c.id.clone())
+                .collect();
+            for id in running {
+                if let Ok(stats) = container_svc.get_stats(&id).await {
+                    app.container_stats
+                        .insert(id, (stats.cpu_percent, stats.memory_usage));
                 }
             }
         }
-        Panel::Images => {
+        PanelId::Images => {
             if let Ok(images) = image_svc.list().await {
                 app.images = images;
             }
         }
-        Panel::Volumes => {
+        PanelId::Volumes => {
             if let Ok(volumes) = volume_svc.list().await {
                 app.volumes = volumes;
             }
         }
-        Panel::Networks => {
+        PanelId::Networks => {
             if let Ok(networks) = network_svc.list().await {
                 app.networks = networks;
-            }
-        }
-        Panel::Pods => {
-            if app.supports_pods {
-                if let Ok(pods) = pod_svc.list().await {
-                    app.pods = pods;
-                }
             }
         }
     }

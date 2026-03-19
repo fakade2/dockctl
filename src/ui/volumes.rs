@@ -1,73 +1,91 @@
 use ratatui::{
-    layout::Constraint,
-    style::{Color, Modifier, Style, Stylize},
+    layout::{Constraint, Rect},
+    style::{Color, Modifier, Style},
     widgets::{Cell, Row, Table},
     Frame,
-    layout::Rect,
 };
 
-use crate::app::App;
-use crate::ui::panel_block;
+use crate::app::{App, PanelId};
+use crate::ui::{
+    create_table_header, format_scroll_hint, panel_block, selected_row_style, truncate_str,
+    visible_column_count,
+};
 
-/// Renders the volume list as a table in the left panel.
-pub fn draw_volume_list(frame: &mut Frame, area: Rect, app: &App, is_focused: bool) {
-    let header = Row::new(vec![
-        Cell::from(" Name").style(Style::default().fg(Color::Cyan).bold()),
-        Cell::from("Driver").style(Style::default().fg(Color::Cyan).bold()),
-        Cell::from("Mountpoint").style(Style::default().fg(Color::Cyan).bold()),
-    ])
-    .height(1)
-    .bottom_margin(1);
+/// Renders the Volumes panel (panel 6, right column).
+/// Columns are configurable and scrollable with Left/Right.
+pub fn draw_volume_panel(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    is_expanded: bool,
+    is_focused: bool,
+    columns: &[String],
+) {
+    let count = app.volumes.len();
+    let title = format!("Volumes ({})", count);
+
+    if !is_expanded {
+        let block = panel_block(&title, PanelId::Volumes.number(), is_focused);
+        frame.render_widget(block, area);
+        return;
+    }
+
+    let selected = app.panel_selection(PanelId::Volumes);
+    let col_offset = app.panel_column_offset(PanelId::Volumes);
+    let max_visible = visible_column_count(area.width, columns.len());
+    let start = col_offset.min(columns.len().saturating_sub(max_visible));
+    let visible_cols = &columns[start..(start + max_visible).min(columns.len())];
+
+    let header = create_table_header(visible_cols);
 
     let rows: Vec<Row> = app
         .volumes
         .iter()
         .enumerate()
         .map(|(i, vol)| {
-            let style = if i == app.selected_index {
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
+            let style = selected_row_style(is_focused, i == selected);
 
-            Row::new(vec![
-                Cell::from(format!(" {}", vol.name)).style(Style::default().fg(Color::White)),
-                Cell::from(vol.driver.clone()).style(Style::default().fg(Color::Yellow)),
-                Cell::from(truncate_path(&vol.mountpoint, 50))
-                    .style(Style::default().fg(Color::DarkGray)),
-            ])
-            .style(style)
+            let cells: Vec<Cell> = visible_cols
+                .iter()
+                .map(|col| match col.as_str() {
+                    "Name" => Cell::from(format!(" {}", vol.name))
+                        .style(Style::default().fg(Color::White)),
+                    "Driver" => Cell::from(vol.driver.clone())
+                        .style(Style::default().fg(Color::Yellow)),
+                    "Mountpoint" => Cell::from(truncate_str(&vol.mountpoint, 40))
+                        .style(Style::default().fg(Color::DarkGray)),
+                    "Created" => Cell::from(vol.created_at.clone())
+                        .style(Style::default().fg(Color::DarkGray)),
+                    _ => Cell::from(""),
+                })
+                .collect();
+
+            Row::new(cells).style(style)
         })
         .collect();
 
-    let title = format!("Volumes ({})", app.volumes.len());
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(35),
-            Constraint::Percentage(15),
-            Constraint::Percentage(50),
-        ],
-    )
-    .header(header)
-    .block(panel_block(&title, is_focused))
-    .row_highlight_style(
-        Style::default()
-            .bg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD),
-    );
+    let col_widths: Vec<Constraint> = visible_cols
+        .iter()
+        .map(|col| match col.as_str() {
+            "Name" => Constraint::Percentage(35),
+            "Driver" => Constraint::Length(10),
+            "Mountpoint" => Constraint::Percentage(40),
+            "Created" => Constraint::Percentage(18),
+            _ => Constraint::Percentage((100 / visible_cols.len() as u16).max(1)),
+        })
+        .collect();
+
+    let scroll_hint = format_scroll_hint(start, max_visible, columns.len());
+
+    let table = Table::new(rows, col_widths)
+        .header(header)
+        .block(panel_block(
+            &format!("Volumes ({}){}", count, scroll_hint),
+            PanelId::Volumes.number(),
+            is_focused,
+        ))
+        .row_highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD));
 
     frame.render_widget(table, area);
 }
 
-/// Truncates a filesystem path to `max_len` characters, replacing the middle
-/// with an ellipsis when necessary.
-fn truncate_path(path: &str, max_len: usize) -> String {
-    if path.len() <= max_len {
-        return path.to_string();
-    }
-    let keep = (max_len - 3) / 2;
-    format!("{}...{}", &path[..keep], &path[path.len() - keep..])
-}
