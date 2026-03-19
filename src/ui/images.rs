@@ -1,17 +1,16 @@
 use ratatui::{
-    layout::{Constraint, Rect},
+    layout::Constraint,
     style::{Color, Modifier, Style, Stylize},
     widgets::{Cell, Row, Table},
     Frame,
+    layout::Rect,
 };
 
 use crate::app::App;
-use crate::config::LayoutConfig;
-use crate::ui::{format_bytes, format_timestamp_age, titled_block};
+use crate::ui::{format_bytes, format_timestamp_age, panel_block};
 
-/// Renders the Images view — a table of all local images with repo/tag, short
-/// ID, size, and creation date.
-pub fn draw_images(frame: &mut Frame, area: Rect, app: &App, _layout: &LayoutConfig) {
+/// Renders the image list as a table in the left panel.
+pub fn draw_image_list(frame: &mut Frame, area: Rect, app: &App, is_focused: bool) {
     let header = Row::new(vec![
         Cell::from(" Repository:Tag").style(Style::default().fg(Color::Cyan).bold()),
         Cell::from("ID").style(Style::default().fg(Color::Cyan).bold()),
@@ -65,7 +64,7 @@ pub fn draw_images(frame: &mut Frame, area: Rect, app: &App, _layout: &LayoutCon
         ],
     )
     .header(header)
-    .block(titled_block(&title))
+    .block(panel_block(&title, is_focused))
     .row_highlight_style(
         Style::default()
             .bg(Color::DarkGray)

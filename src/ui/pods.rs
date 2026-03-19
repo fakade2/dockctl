@@ -7,52 +7,18 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::config::LayoutConfig;
-use crate::ui::titled_block;
+use crate::ui::panel_block;
 
-/// Renders the Pods view.
+/// Renders the pod list as a table in the left panel.
 ///
 /// If the active runtime does not support pods (Docker), a notice is shown
 /// instead of the table.
-pub fn draw_pods(frame: &mut Frame, area: Rect, app: &App, _layout: &LayoutConfig) {
+pub fn draw_pod_list(frame: &mut Frame, area: Rect, app: &App, is_focused: bool) {
     if !app.supports_pods {
-        draw_unsupported(frame, area);
+        draw_unsupported(frame, area, is_focused);
         return;
     }
 
-    draw_pod_table(frame, area, app);
-}
-
-// ─── Unsupported runtime notice ──────────────────────────────────────────────
-
-fn draw_unsupported(frame: &mut Frame, area: Rect) {
-    let block = titled_block("Pods");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let v_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(40),
-            Constraint::Length(3),
-            Constraint::Percentage(40),
-        ])
-        .split(inner);
-
-    let msg = Paragraph::new(Line::from(vec![Span::styled(
-        "Pods are only available with Podman runtime",
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::ITALIC),
-    )]))
-    .centered();
-
-    frame.render_widget(msg, v_layout[1]);
-}
-
-// ─── Pod table ───────────────────────────────────────────────────────────────
-
-fn draw_pod_table(frame: &mut Frame, area: Rect, app: &App) {
     let header = Row::new(vec![
         Cell::from(" Name").style(Style::default().fg(Color::Cyan).bold()),
         Cell::from("Status").style(Style::default().fg(Color::Cyan).bold()),
@@ -105,7 +71,7 @@ fn draw_pod_table(frame: &mut Frame, area: Rect, app: &App) {
         ],
     )
     .header(header)
-    .block(titled_block(&title))
+    .block(panel_block(&title, is_focused))
     .row_highlight_style(
         Style::default()
             .bg(Color::DarkGray)
@@ -113,4 +79,31 @@ fn draw_pod_table(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     frame.render_widget(table, area);
+}
+
+// ─── Unsupported runtime notice ──────────────────────────────────────────────
+
+fn draw_unsupported(frame: &mut Frame, area: Rect, is_focused: bool) {
+    let block = panel_block("Pods", is_focused);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let v_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(40),
+            Constraint::Length(3),
+            Constraint::Percentage(40),
+        ])
+        .split(inner);
+
+    let msg = Paragraph::new(Line::from(vec![Span::styled(
+        "Pods only available with Podman",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::ITALIC),
+    )]))
+    .centered();
+
+    frame.render_widget(msg, v_layout[1]);
 }

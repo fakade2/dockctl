@@ -1,17 +1,16 @@
 use ratatui::{
-    layout::{Constraint, Rect},
+    layout::Constraint,
     style::{Color, Modifier, Style, Stylize},
     widgets::{Cell, Row, Table},
     Frame,
+    layout::Rect,
 };
 
 use crate::app::App;
-use crate::config::LayoutConfig;
-use crate::ui::titled_block;
+use crate::ui::panel_block;
 
-/// Renders the Volumes view — a table listing all volumes with name, driver,
-/// and mountpoint.
-pub fn draw_volumes(frame: &mut Frame, area: Rect, app: &App, _layout: &LayoutConfig) {
+/// Renders the volume list as a table in the left panel.
+pub fn draw_volume_list(frame: &mut Frame, area: Rect, app: &App, is_focused: bool) {
     let header = Row::new(vec![
         Cell::from(" Name").style(Style::default().fg(Color::Cyan).bold()),
         Cell::from("Driver").style(Style::default().fg(Color::Cyan).bold()),
@@ -53,7 +52,7 @@ pub fn draw_volumes(frame: &mut Frame, area: Rect, app: &App, _layout: &LayoutCo
         ],
     )
     .header(header)
-    .block(titled_block(&title))
+    .block(panel_block(&title, is_focused))
     .row_highlight_style(
         Style::default()
             .bg(Color::DarkGray)

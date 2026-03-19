@@ -84,29 +84,20 @@ impl Default for KeybindingsConfig {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct LayoutConfig {
-    /// Position of sidebar: "left" or "right"
-    pub sidebar_position: String,
-    /// Width of sidebar in columns
-    pub sidebar_width: u16,
-    /// Position of detail panel: "right" or "bottom"
-    pub detail_position: String,
-    /// Position of logs panel: "bottom" or "right"
+    /// Percentage of horizontal space used by the left navigation panel.
+    pub left_panel_percent: u16,
+    /// Percentage of the main area used by the preview split.
+    pub preview_split_percent: u16,
+    /// Position of the logs panel: "bottom" or "right".
     pub logs_position: String,
-    /// Percentage of main area used by list vs detail (when side-by-side)
-    pub main_split_percent: u16,
-    /// Percentage of vertical space for main vs bottom panels
-    pub vertical_split_percent: u16,
 }
 
 impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
-            sidebar_position: "left".to_string(),
-            sidebar_width: 28,
-            detail_position: "right".to_string(),
+            left_panel_percent: 30,
+            preview_split_percent: 60,
             logs_position: "bottom".to_string(),
-            main_split_percent: 55,
-            vertical_split_percent: 60,
         }
     }
 }
@@ -156,9 +147,7 @@ mod tests {
         assert_eq!(cfg.general.refresh_interval_ms, 1000);
         assert_eq!(cfg.keybindings.stop, "s");
         assert_eq!(cfg.keybindings.search, "/");
-        assert_eq!(cfg.layout.sidebar_width, 28);
-        assert_eq!(cfg.layout.sidebar_position, "left");
-        assert_eq!(cfg.layout.main_split_percent, 55);
+        assert_eq!(cfg.layout.left_panel_percent, 30);
     }
 
     #[test]
@@ -172,25 +161,21 @@ theme = "dark"
         assert_eq!(cfg.general.default_runtime, "auto");
         assert_eq!(cfg.general.refresh_interval_ms, 1000);
         assert_eq!(cfg.keybindings.restart, "r");
-        assert_eq!(cfg.layout.sidebar_width, 28);
+        assert_eq!(cfg.layout.left_panel_percent, 30);
     }
 
     #[test]
     fn layout_config_from_toml() {
         let toml_str = r#"
 [layout]
-sidebar_position = "right"
-sidebar_width = 32
-detail_position = "bottom"
-main_split_percent = 70
-vertical_split_percent = 50
+left_panel_percent = 25
+preview_split_percent = 70
+logs_position = "right"
 "#;
         let cfg: DockctlConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(cfg.layout.sidebar_position, "right");
-        assert_eq!(cfg.layout.sidebar_width, 32);
-        assert_eq!(cfg.layout.detail_position, "bottom");
-        assert_eq!(cfg.layout.main_split_percent, 70);
-        assert_eq!(cfg.layout.vertical_split_percent, 50);
+        assert_eq!(cfg.layout.left_panel_percent, 25);
+        assert_eq!(cfg.layout.preview_split_percent, 70);
+        assert_eq!(cfg.layout.logs_position, "right");
         // Other sections still default
         assert_eq!(cfg.general.refresh_interval_ms, 1000);
     }
@@ -199,12 +184,11 @@ vertical_split_percent = 50
     fn partial_layout_fills_defaults() {
         let toml_str = r#"
 [layout]
-sidebar_width = 40
+left_panel_percent = 40
 "#;
         let cfg: DockctlConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(cfg.layout.sidebar_width, 40);
-        assert_eq!(cfg.layout.sidebar_position, "left");
-        assert_eq!(cfg.layout.detail_position, "right");
-        assert_eq!(cfg.layout.main_split_percent, 55);
+        assert_eq!(cfg.layout.left_panel_percent, 40);
+        assert_eq!(cfg.layout.preview_split_percent, 60);
+        assert_eq!(cfg.layout.logs_position, "bottom");
     }
 }

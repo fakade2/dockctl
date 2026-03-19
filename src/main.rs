@@ -19,7 +19,7 @@ use crossterm::{
 use ratatui::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-use crate::app::{Alert, AlertLevel, App, InputMode, View};
+use crate::app::{Alert, AlertLevel, App, FocusZone, InputMode, Panel};
 use crate::event::{AppEvent, EventHandler};
 use crate::runtime::{detect_runtime, RuntimeType};
 use crate::services::{
@@ -95,8 +95,8 @@ async fn main() -> Result<()> {
         // Handle events
         match events.next().await? {
             AppEvent::Tick => {
-                // Refresh data on tick
-                load_view_data(
+                // Refresh data for the active panel on tick
+                load_panel_data(
                     &mut app,
                     &container_svc,
                     &image_svc,
@@ -120,96 +120,103 @@ async fn main() -> Result<()> {
                         app.should_quit = true;
                     }
 
-                    // Navigation between views
-                    (KeyCode::Tab, _) => app.next_view(),
-                    (KeyCode::BackTab, _) => app.previous_view(),
+                    // Panel switching (1-6) — lazygit style
+                    (KeyCode::Char('1'), _) => app.switch_to_panel(Panel::Status),
+                    (KeyCode::Char('2'), _) => app.switch_to_panel(Panel::Containers),
+                    (KeyCode::Char('3'), _) => app.switch_to_panel(Panel::Images),
+                    (KeyCode::Char('4'), _) => app.switch_to_panel(Panel::Volumes),
+                    (KeyCode::Char('5'), _) => app.switch_to_panel(Panel::Networks),
+                    (KeyCode::Char('6'), _) if supports_pods => {
+                        app.switch_to_panel(Panel::Pods);
+                    }
 
-                    // View switching (1-8) — lazygit-style
-                    (KeyCode::Char('1'), _) => {
-                        app.current_view = View::Dashboard;
-                        app.reset_selection();
+                    // Tab cycles panels
+                    (KeyCode::Tab, _) => app.next_panel(),
+                    (KeyCode::BackTab, _) => app.previous_panel(),
+
+                    // Focus switching between columns
+                    (KeyCode::Left, _) => {
+                        app.focus = FocusZone::LeftPanel;
+                        app.preview_scroll = 0;
                     }
-                    (KeyCode::Char('2'), _) => {
-                        app.current_view = View::Containers;
-                        app.reset_selection();
+                    (KeyCode::Right, _) | (KeyCode::Char('0'), _) => {
+                        app.focus = FocusZone::RightPreview;
                     }
-                    (KeyCode::Char('3'), _) => {
-                        app.current_view = View::Images;
-                        app.reset_selection();
+                    (KeyCode::Esc, _) => {
+                        app.focus = FocusZone::LeftPanel;
+                        app.preview_scroll = 0;
+                        app.show_detail = false;
+                        app.clear_preview_data();
                     }
-                    (KeyCode::Char('4'), _) => {
-                        app.current_view = View::Volumes;
-                        app.reset_selection();
-                    }
-                    (KeyCode::Char('5'), _) => {
-                        app.current_view = View::Networks;
-                        app.reset_selection();
-                    }
-                    (KeyCode::Char('6'), _) => {
-                        app.current_view = View::Compose;
-                        app.reset_selection();
-                    }
-                    (KeyCode::Char('7'), _) => {
-                        app.current_view = View::Builds;
-                        app.reset_selection();
-                    }
-                    (KeyCode::Char('8'), _) => {
-                        if supports_pods {
-                            app.current_view = View::Pods;
-                            app.reset_selection();
+
+                    // Navigation within focused column
+                    (KeyCode::Down | KeyCode::Char('j'), _) => match app.focus {
+                        FocusZone::LeftPanel => app.next_item(),
+                        FocusZone::RightPreview => {
+                            app.preview_scroll = app.preview_scroll.saturating_add(1);
                         }
-                    }
+                    },
+                    (KeyCode::Up | KeyCode::Char('k'), _) => match app.focus {
+                        FocusZone::LeftPanel => app.previous_item(),
+                        FocusZone::RightPreview => {
+                            app.preview_scroll = app.preview_scroll.saturating_sub(1);
+                        }
+                    },
 
-                    // List navigation
-                    (KeyCode::Down | KeyCode::Char('j'), _) => app.next_item(),
-                    (KeyCode::Up | KeyCode::Char('k'), _) => app.previous_item(),
-
-                    // Detail toggle
-                    (KeyCode::Enter, _) => {
-                        if app.current_view == View::Containers {
+                    // Enter — load full preview data and focus right
+                    (KeyCode::Enter, _) => match app.active_panel {
+                        Panel::Containers => {
                             if let Some(id) = app.selected_container_id() {
-                                app.show_detail = !app.show_detail;
-                                if app.show_detail {
-                                    if let Ok(detail) = container_svc.get_detail(&id).await {
-                                        app.detail_container = Some(detail);
-                                    }
-                                    if let Ok(logs) = container_svc.get_logs(&id, Some(100)).await {
-                                        app.log_lines = logs.lines().map(String::from).collect();
-                                    }
-                                    if let Ok(stats) = container_svc.get_stats(&id).await {
-                                        app.stats = Some(stats);
-                                    }
+                                if let Ok(detail) = container_svc.get_detail(&id).await {
+                                    app.detail_container = Some(detail);
                                 }
+                                if let Ok(logs) =
+                                    container_svc.get_logs(&id, Some(100)).await
+                                {
+                                    app.log_lines =
+                                        logs.lines().map(String::from).collect();
+                                }
+                                if let Ok(stats) = container_svc.get_stats(&id).await {
+                                    app.stats = Some(stats);
+                                }
+                                app.show_detail = true;
+                                app.focus = FocusZone::RightPreview;
+                                app.preview_scroll = 0;
                             }
                         }
-                    }
+                        _ => {
+                            app.focus = FocusZone::RightPreview;
+                            app.preview_scroll = 0;
+                        }
+                    },
 
-                    // Container actions
-                    (KeyCode::Char('s'), _) if app.current_view == View::Containers => {
+                    // Container actions (only on Containers panel)
+                    (KeyCode::Char('s'), _) if app.active_panel == Panel::Containers => {
                         if let Some(id) = app.selected_container_id() {
                             let _ = container_svc.stop(&id).await;
                         }
                     }
-                    (KeyCode::Char('r'), _) if app.current_view == View::Containers => {
+                    (KeyCode::Char('r'), _) if app.active_panel == Panel::Containers => {
                         if let Some(id) = app.selected_container_id() {
                             let _ = container_svc.restart(&id).await;
                         }
                     }
-                    (KeyCode::Char('x'), _) if app.current_view == View::Containers => {
+                    (KeyCode::Char('x'), _) if app.active_panel == Panel::Containers => {
                         if let Some(id) = app.selected_container_id() {
                             let _ = container_svc.remove(&id, true).await;
                         }
                     }
-                    (KeyCode::Char('l'), _) if app.current_view == View::Containers => {
+                    (KeyCode::Char('l'), _) if app.active_panel == Panel::Containers => {
                         if let Some(id) = app.selected_container_id() {
-                            if let Ok(logs) = container_svc.get_logs(&id, Some(200)).await {
-                                app.log_lines = logs.lines().map(String::from).collect();
+                            if let Ok(logs) =
+                                container_svc.get_logs(&id, Some(200)).await
+                            {
+                                app.log_lines =
+                                    logs.lines().map(String::from).collect();
                             }
                         }
                     }
-
-                    // Exec into container (tmux-aware)
-                    (KeyCode::Char('e'), _) if app.current_view == View::Containers => {
+                    (KeyCode::Char('e'), _) if app.active_panel == Panel::Containers => {
                         if let Some(id) = app.selected_container_id() {
                             if tmux::is_tmux_available() {
                                 let bin = match runtime.runtime_type() {
@@ -226,14 +233,6 @@ async fn main() -> Result<()> {
                     (KeyCode::Char('/'), _) => {
                         app.input_mode = InputMode::Search;
                         app.search_query.clear();
-                    }
-
-                    // Escape
-                    (KeyCode::Esc, _) => {
-                        app.show_detail = false;
-                        app.detail_container = None;
-                        app.log_lines.clear();
-                        app.stats = None;
                     }
 
                     _ => {}
@@ -257,7 +256,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Load all data for all views.
+/// Load all data for all panels (used at startup).
 async fn load_data(
     app: &mut App,
     container_svc: &ContainerService,
@@ -347,8 +346,8 @@ fn compute_alerts(app: &mut App) {
     }
 }
 
-/// Load data only for the currently active view (more efficient on tick).
-async fn load_view_data(
+/// Load data only for the currently active panel (more efficient on tick).
+async fn load_panel_data(
     app: &mut App,
     container_svc: &ContainerService,
     image_svc: &ImageService,
@@ -357,8 +356,8 @@ async fn load_view_data(
     pod_svc: &PodService,
     system_svc: &SystemService,
 ) {
-    match app.current_view {
-        View::Dashboard => {
+    match app.active_panel {
+        Panel::Status => {
             if let Ok(containers) = container_svc.list_all().await {
                 app.containers = containers;
             }
@@ -366,11 +365,11 @@ async fn load_view_data(
                 app.system_info = Some(info);
             }
         }
-        View::Containers => {
+        Panel::Containers => {
             if let Ok(containers) = container_svc.list_all().await {
                 app.containers = containers;
             }
-            // Refresh stats if detail is open
+            // Refresh stats and logs if detail is open
             if app.show_detail {
                 if let Some(id) = app.selected_container_id() {
                     if let Ok(stats) = container_svc.get_stats(&id).await {
@@ -382,29 +381,28 @@ async fn load_view_data(
                 }
             }
         }
-        View::Images => {
+        Panel::Images => {
             if let Ok(images) = image_svc.list().await {
                 app.images = images;
             }
         }
-        View::Volumes => {
+        Panel::Volumes => {
             if let Ok(volumes) = volume_svc.list().await {
                 app.volumes = volumes;
             }
         }
-        View::Networks => {
+        Panel::Networks => {
             if let Ok(networks) = network_svc.list().await {
                 app.networks = networks;
             }
         }
-        View::Pods => {
+        Panel::Pods => {
             if app.supports_pods {
                 if let Ok(pods) = pod_svc.list().await {
                     app.pods = pods;
                 }
             }
         }
-        View::Compose | View::Builds => {}
     }
 }
 

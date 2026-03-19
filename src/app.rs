@@ -4,79 +4,79 @@ use crate::runtime::{
 };
 
 // ---------------------------------------------------------------------------
-// View — each screen the user can navigate to
+// Panel — each screen the user can navigate to
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum View {
-    Dashboard,
+pub enum Panel {
+    Status,
     Containers,
     Images,
     Volumes,
     Networks,
-    Compose,
-    Builds,
     Pods,
 }
 
-impl View {
-    /// All views in display order (includes Pods).
-    pub const ALL: &'static [View] = &[
-        View::Dashboard,
-        View::Containers,
-        View::Images,
-        View::Volumes,
-        View::Networks,
-        View::Compose,
-        View::Builds,
-        View::Pods,
+impl Panel {
+    /// All panels in display order (includes Pods).
+    pub const ALL: &'static [Panel] = &[
+        Panel::Status,
+        Panel::Containers,
+        Panel::Images,
+        Panel::Volumes,
+        Panel::Networks,
+        Panel::Pods,
     ];
 
-    /// Human-readable label for the view.
+    /// Human-readable label for the panel.
     pub fn label(self) -> &'static str {
         match self {
-            View::Dashboard => "Dashboard",
-            View::Containers => "Containers",
-            View::Images => "Images",
-            View::Volumes => "Volumes",
-            View::Networks => "Networks",
-            View::Compose => "Compose",
-            View::Builds => "Builds",
-            View::Pods => "Pods",
+            Panel::Status => "Status",
+            Panel::Containers => "Containers",
+            Panel::Images => "Images",
+            Panel::Volumes => "Volumes",
+            Panel::Networks => "Networks",
+            Panel::Pods => "Pods",
         }
     }
 
-    /// Keyboard shortcut number for this view ("1" through "8").
+    /// Keyboard shortcut number for this panel ("1" through "6").
     pub fn shortcut(self) -> &'static str {
         match self {
-            View::Dashboard => "1",
-            View::Containers => "2",
-            View::Images => "3",
-            View::Volumes => "4",
-            View::Networks => "5",
-            View::Compose => "6",
-            View::Builds => "7",
-            View::Pods => "8",
+            Panel::Status => "1",
+            Panel::Containers => "2",
+            Panel::Images => "3",
+            Panel::Volumes => "4",
+            Panel::Networks => "5",
+            Panel::Pods => "6",
         }
     }
 
-    /// Ordered list of views available for the current runtime.
+    /// Ordered list of panels available for the current runtime.
     /// `Pods` is only included when the runtime supports it (Podman).
-    fn ordered(include_pods: bool) -> Vec<View> {
-        let mut views = vec![
-            View::Dashboard,
-            View::Containers,
-            View::Images,
-            View::Volumes,
-            View::Networks,
-            View::Compose,
-            View::Builds,
+    pub fn ordered(include_pods: bool) -> Vec<Panel> {
+        let mut panels = vec![
+            Panel::Status,
+            Panel::Containers,
+            Panel::Images,
+            Panel::Volumes,
+            Panel::Networks,
         ];
         if include_pods {
-            views.push(View::Pods);
+            panels.push(Panel::Pods);
         }
-        views
+        panels
     }
+}
+
+// ---------------------------------------------------------------------------
+// FocusZone — which zone of the UI currently has keyboard focus
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusZone {
+    LeftPanel,
+    RightPreview,
 }
 
 // ---------------------------------------------------------------------------
@@ -112,8 +112,9 @@ pub enum InputMode {
 /// Central application state shared between event handling and rendering.
 pub struct App {
     // Navigation
-    pub current_view: View,
-    pub previous_view: Option<View>,
+    pub active_panel: Panel,
+    pub previous_panel: Option<Panel>,
+    pub focus: FocusZone,
     pub input_mode: InputMode,
     pub search_query: String,
 
@@ -131,6 +132,7 @@ pub struct App {
     pub detail_container: Option<ContainerDetail>,
     pub log_lines: Vec<String>,
     pub stats: Option<ContainerStats>,
+    pub preview_scroll: u16,
 
     // Alerts & counts
     pub alerts: Vec<Alert>,
@@ -149,8 +151,9 @@ impl App {
     /// Create a new `App`. Pass `true` when the runtime is Podman (pod support).
     pub fn new(supports_pods: bool) -> Self {
         Self {
-            current_view: View::Dashboard,
-            previous_view: None,
+            active_panel: Panel::Status,
+            previous_panel: None,
+            focus: FocusZone::LeftPanel,
             input_mode: InputMode::Normal,
             search_query: String::new(),
 
@@ -166,6 +169,7 @@ impl App {
             detail_container: None,
             log_lines: Vec::new(),
             stats: None,
+            preview_scroll: 0,
 
             alerts: Vec::new(),
             stale_images_count: 0,
@@ -178,48 +182,56 @@ impl App {
     }
 
     // ------------------------------------------------------------------
-    // View cycling
+    // Panel switching
     // ------------------------------------------------------------------
 
-    /// Move to the next view in order, wrapping around.
-    pub fn next_view(&mut self) {
-        let views = View::ordered(self.supports_pods);
-        let current_pos = views
-            .iter()
-            .position(|v| *v == self.current_view)
-            .unwrap_or(0);
-        let next_pos = (current_pos + 1) % views.len();
-        self.switch_to_view(views[next_pos]);
+    /// Switch to a specific panel, saving the current one as `previous_panel`.
+    pub fn switch_to_panel(&mut self, panel: Panel) {
+        self.previous_panel = Some(self.active_panel);
+        self.active_panel = panel;
+        self.reset_selection();
+        self.clear_preview_data();
     }
 
-    /// Move to the previous view in order, wrapping around.
-    pub fn previous_view(&mut self) {
-        let views = View::ordered(self.supports_pods);
-        let current_pos = views
+    /// Move to the next panel in order, wrapping around.
+    pub fn next_panel(&mut self) {
+        let panels = Panel::ordered(self.supports_pods);
+        let current_pos = panels
             .iter()
-            .position(|v| *v == self.current_view)
+            .position(|p| *p == self.active_panel)
+            .unwrap_or(0);
+        let next_pos = (current_pos + 1) % panels.len();
+        self.switch_to_panel(panels[next_pos]);
+    }
+
+    /// Move to the previous panel in order, wrapping around.
+    pub fn previous_panel(&mut self) {
+        let panels = Panel::ordered(self.supports_pods);
+        let current_pos = panels
+            .iter()
+            .position(|p| *p == self.active_panel)
             .unwrap_or(0);
         let prev_pos = if current_pos == 0 {
-            views.len() - 1
+            panels.len() - 1
         } else {
             current_pos - 1
         };
-        self.switch_to_view(views[prev_pos]);
+        self.switch_to_panel(panels[prev_pos]);
     }
 
-    /// Switch to a specific view, saving the current one as `previous_view`.
-    fn switch_to_view(&mut self, view: View) {
-        self.previous_view = Some(self.current_view);
-        self.current_view = view;
-        self.reset_selection();
-        self.show_detail = false;
+    /// Clear all preview/detail state.
+    pub fn clear_preview_data(&mut self) {
+        self.detail_container = None;
+        self.log_lines.clear();
+        self.stats = None;
+        self.preview_scroll = 0;
     }
 
     // ------------------------------------------------------------------
     // List selection
     // ------------------------------------------------------------------
 
-    /// Move selection down one item in the current view's list, wrapping.
+    /// Move selection down one item in the current panel's list, wrapping.
     pub fn next_item(&mut self) {
         let len = self.current_list_len();
         if len > 0 {
@@ -227,7 +239,7 @@ impl App {
         }
     }
 
-    /// Move selection up one item in the current view's list, wrapping.
+    /// Move selection up one item in the current panel's list, wrapping.
     pub fn previous_item(&mut self) {
         let len = self.current_list_len();
         if len > 0 {
@@ -244,17 +256,15 @@ impl App {
         self.selected_index = 0;
     }
 
-    /// Length of the list currently visible in the active view.
+    /// Length of the list currently visible in the active panel.
     pub fn current_list_len(&self) -> usize {
-        match self.current_view {
-            View::Dashboard => self.containers.len(),
-            View::Containers => self.containers.len(),
-            View::Images => self.images.len(),
-            View::Volumes => self.volumes.len(),
-            View::Networks => self.networks.len(),
-            View::Compose => 0, // compose projects not tracked as a simple vec yet
-            View::Builds => 0,  // build queue not tracked yet
-            View::Pods => self.pods.len(),
+        match self.active_panel {
+            Panel::Status => 0,
+            Panel::Containers => self.containers.len(),
+            Panel::Images => self.images.len(),
+            Panel::Volumes => self.volumes.len(),
+            Panel::Networks => self.networks.len(),
+            Panel::Pods => self.pods.len(),
         }
     }
 
@@ -297,31 +307,33 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
-    fn new_app_starts_on_dashboard() {
+    fn new_app_starts_on_status_panel() {
         let app = App::new(false);
-        assert_eq!(app.current_view, View::Dashboard);
+        assert_eq!(app.active_panel, Panel::Status);
+        assert_eq!(app.focus, FocusZone::LeftPanel);
         assert_eq!(app.input_mode, InputMode::Normal);
         assert!(!app.should_quit);
     }
 
     #[test]
-    fn view_cycling_skips_pods_when_unsupported() {
+    fn panel_cycling_skips_pods_when_unsupported() {
         let mut app = App::new(false);
         for _ in 0..10 {
-            app.next_view();
-            assert_ne!(app.current_view, View::Pods);
+            app.next_panel();
+            assert_ne!(app.active_panel, Panel::Pods);
         }
     }
 
     #[test]
-    fn view_cycling_includes_pods_when_supported() {
+    fn panel_cycling_includes_pods_when_supported() {
         let mut app = App::new(true);
         let mut seen_pods = false;
         for _ in 0..10 {
-            app.next_view();
-            if app.current_view == View::Pods {
+            app.next_panel();
+            if app.active_panel == Panel::Pods {
                 seen_pods = true;
             }
         }
@@ -329,66 +341,92 @@ mod tests {
     }
 
     #[test]
-    fn previous_view_wraps_around() {
+    fn previous_panel_wraps_around() {
         let mut app = App::new(false);
-        assert_eq!(app.current_view, View::Dashboard);
-        app.previous_view(); // should wrap to last view (Builds)
-        assert_eq!(app.current_view, View::Builds);
+        assert_eq!(app.active_panel, Panel::Status);
+        app.previous_panel(); // should wrap to last panel (Networks, since no pods)
+        assert_eq!(app.active_panel, Panel::Networks);
+    }
+
+    #[test]
+    fn switch_panel_resets_selection_and_preview() {
+        let mut app = App::new(false);
+        app.selected_index = 5;
+        app.detail_container = Some(ContainerDetail {
+            id: "test".into(),
+            name: "test".into(),
+            image: "img".into(),
+            created: "now".into(),
+            state: crate::runtime::ContainerState {
+                status: "running".into(),
+                running: true,
+                paused: false,
+                restarting: false,
+                oom_killed: false,
+                dead: false,
+                pid: 1,
+                exit_code: 0,
+                started_at: "".into(),
+                finished_at: "".into(),
+            },
+            path: "".into(),
+            args: vec![],
+            restart_count: 0,
+            driver: "".into(),
+            platform: "".into(),
+            log_path: "".into(),
+            labels: HashMap::new(),
+            env: vec![],
+        });
+        app.log_lines = vec!["line1".into()];
+        app.stats = Some(ContainerStats {
+            container_id: "test".into(),
+            name: "test".into(),
+            cpu_percent: 0.0,
+            memory_usage: 0,
+            memory_limit: 0,
+            memory_percent: 0.0,
+            network_rx: 0,
+            network_tx: 0,
+            block_read: 0,
+            block_write: 0,
+            pids: 0,
+        });
+        app.preview_scroll = 10;
+
+        app.switch_to_panel(Panel::Images);
+
+        assert_eq!(app.selected_index, 0);
+        assert!(app.detail_container.is_none());
+        assert!(app.log_lines.is_empty());
+        assert!(app.stats.is_none());
+        assert_eq!(app.preview_scroll, 0);
+    }
+
+    #[test]
+    fn focus_toggles_between_zones() {
+        let mut app = App::new(false);
+        assert_eq!(app.focus, FocusZone::LeftPanel);
+        app.focus = FocusZone::RightPreview;
+        assert_eq!(app.focus, FocusZone::RightPreview);
+        app.focus = FocusZone::LeftPanel;
+        assert_eq!(app.focus, FocusZone::LeftPanel);
     }
 
     #[test]
     fn item_navigation_wraps() {
         let mut app = App::new(false);
-        app.current_view = View::Containers;
-        // empty list — no crash
+        app.active_panel = Panel::Containers;
+        // empty list -- no crash
         app.next_item();
         app.previous_item();
         assert_eq!(app.selected_index, 0);
     }
 
     #[test]
-    fn selected_container_id_returns_none_when_empty() {
-        let app = App::new(false);
-        assert!(app.selected_container_id().is_none());
-    }
-
-    #[test]
-    fn view_shortcut_returns_correct_numbers() {
-        assert_eq!(View::Dashboard.shortcut(), "1");
-        assert_eq!(View::Containers.shortcut(), "2");
-        assert_eq!(View::Pods.shortcut(), "8");
-    }
-
-    #[test]
-    fn all_views_have_unique_shortcuts() {
-        let shortcuts: Vec<&str> = View::ALL.iter().map(|v| v.shortcut()).collect();
-        let unique: std::collections::HashSet<&&str> = shortcuts.iter().collect();
-        assert_eq!(shortcuts.len(), unique.len());
-    }
-
-    #[test]
-    fn new_app_has_empty_alerts() {
-        let app = App::new(false);
-        assert!(app.alerts.is_empty());
-        assert_eq!(app.stale_images_count, 0);
-        assert_eq!(app.unused_volumes_count, 0);
-        assert_eq!(app.dangling_images_count, 0);
-    }
-
-    #[test]
-    fn switch_view_resets_selection_and_detail() {
-        let mut app = App::new(false);
-        app.selected_index = 5;
-        app.show_detail = true;
-        app.next_view();
-        assert_eq!(app.selected_index, 0);
-        assert!(!app.show_detail);
-    }
-
-    #[test]
     fn item_navigation_with_data() {
         let mut app = App::new(false);
-        app.current_view = View::Containers;
+        app.active_panel = Panel::Containers;
         app.containers = vec![
             ContainerSummary {
                 id: "a".into(),
@@ -396,12 +434,12 @@ mod tests {
                 names: vec!["a".into()],
                 image: "img".into(),
                 image_id: "sha256:aaa".into(),
-                command: "".into(),
+                command: "/bin/sh".into(),
                 state: "running".into(),
-                status: "Up".into(),
-                created: 0,
+                status: "Up 2 hours".into(),
+                created: 1700000000,
                 ports: vec![],
-                labels: Default::default(),
+                labels: HashMap::from([("env".to_string(), "dev".to_string())]),
             },
             ContainerSummary {
                 id: "b".into(),
@@ -409,12 +447,12 @@ mod tests {
                 names: vec!["b".into()],
                 image: "img".into(),
                 image_id: "sha256:bbb".into(),
-                command: "".into(),
-                state: "running".into(),
-                status: "Up".into(),
-                created: 0,
+                command: "/bin/bash".into(),
+                state: "exited".into(),
+                status: "Exited (0)".into(),
+                created: 1700000100,
                 ports: vec![],
-                labels: Default::default(),
+                labels: HashMap::from([("env".to_string(), "prod".to_string())]),
             },
         ];
         assert_eq!(app.selected_index, 0);
@@ -433,28 +471,97 @@ mod tests {
             id: "abc123".into(),
             name: "test".into(),
             names: vec!["test".into()],
-            image: "img".into(),
+            image: "nginx:latest".into(),
             image_id: "sha256:aaa".into(),
-            command: "".into(),
+            command: "nginx -g daemon off;".into(),
             state: "running".into(),
-            status: "Up".into(),
-            created: 0,
+            status: "Up 5 minutes".into(),
+            created: 1700000000,
             ports: vec![],
-            labels: Default::default(),
+            labels: HashMap::from([("maintainer".to_string(), "nginx".to_string())]),
         }];
         app.images = vec![ImageSummary {
             id: "sha256:def".into(),
             repo_tags: vec!["nginx:latest".into()],
-            repo_digests: vec![],
-            size: 1000,
-            created: 0,
-            labels: Default::default(),
+            repo_digests: vec!["nginx@sha256:abc123".into()],
+            size: 187000000,
+            created: 1699999000,
+            labels: HashMap::from([("version".to_string(), "1.25".to_string())]),
         }];
 
-        app.current_view = View::Containers;
+        app.active_panel = Panel::Containers;
         assert_eq!(app.selected_container_id(), Some("abc123".into()));
 
-        app.current_view = View::Images;
+        app.active_panel = Panel::Images;
         assert_eq!(app.selected_image_id(), Some("sha256:def".into()));
+    }
+
+    #[test]
+    fn all_panels_have_unique_shortcuts() {
+        let shortcuts: Vec<&str> = Panel::ALL.iter().map(|p| p.shortcut()).collect();
+        let unique: std::collections::HashSet<&&str> = shortcuts.iter().collect();
+        assert_eq!(shortcuts.len(), unique.len());
+    }
+
+    #[test]
+    fn new_app_has_empty_alerts() {
+        let app = App::new(false);
+        assert!(app.alerts.is_empty());
+        assert_eq!(app.stale_images_count, 0);
+        assert_eq!(app.unused_volumes_count, 0);
+        assert_eq!(app.dangling_images_count, 0);
+    }
+
+    #[test]
+    fn clear_preview_data_resets_everything() {
+        let mut app = App::new(false);
+        app.detail_container = Some(ContainerDetail {
+            id: "test".into(),
+            name: "test".into(),
+            image: "img".into(),
+            created: "now".into(),
+            state: crate::runtime::ContainerState {
+                status: "running".into(),
+                running: true,
+                paused: false,
+                restarting: false,
+                oom_killed: false,
+                dead: false,
+                pid: 1,
+                exit_code: 0,
+                started_at: "".into(),
+                finished_at: "".into(),
+            },
+            path: "".into(),
+            args: vec![],
+            restart_count: 0,
+            driver: "".into(),
+            platform: "".into(),
+            log_path: "".into(),
+            labels: HashMap::new(),
+            env: vec![],
+        });
+        app.log_lines = vec!["log line".into()];
+        app.stats = Some(ContainerStats {
+            container_id: "test".into(),
+            name: "test".into(),
+            cpu_percent: 50.0,
+            memory_usage: 1024,
+            memory_limit: 4096,
+            memory_percent: 25.0,
+            network_rx: 100,
+            network_tx: 200,
+            block_read: 50,
+            block_write: 75,
+            pids: 5,
+        });
+        app.preview_scroll = 42;
+
+        app.clear_preview_data();
+
+        assert!(app.detail_container.is_none());
+        assert!(app.log_lines.is_empty());
+        assert!(app.stats.is_none());
+        assert_eq!(app.preview_scroll, 0);
     }
 }
