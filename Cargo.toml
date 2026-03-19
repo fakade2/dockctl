@@ -1,0 +1,45 @@
+[package]
+name = "dockctl"
+version = "0.1.0"
+edition = "2024"
+description = "Universal container runtime TUI — Docker & Podman"
+license = "MIT"
+repository = "https://github.com/fakade2/dockctl"
+homepage = "https://dockctl.dev"
+
+[dependencies]
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Docker/Podman API
+bollard = "0.18"
+
+# Async
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+futures-util = "0.3"
+
+# Serialization & Config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Async trait support
+async-trait = "0.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Misc
+dirs = "6"
+chrono = { version = "0.4", features = ["serde"] }
+bytesize = "2"
