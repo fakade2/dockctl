@@ -5,7 +5,132 @@
 
 ## Overview
 
-dockctl is a fast, terminal-native container management tool that replaces Docker Desktop entirely in the terminal. It supports both Docker and Podman through a unified runtime abstraction, works standalone in any terminal, and unlocks enhanced features when tmux is detected.
+dockctl is a theme-based container management platform. The core engine provides service hooks for container operations, and themes consume those hooks to build completely different UX paradigms.
+
+## Architecture Layers
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Theme Layer                             │
+│                                                              │
+│  Owns: ALL key handling, ALL view state, ALL rendering       │
+│  Consumes: service hooks via ThemeAction                     │
+│                                                              │
+│  ┌─────────────────┐    ┌─────────────────────────────────┐ │
+│  │   Dashboard      │    │          Operator               │ │
+│  │   (lazygit)      │    │          (K9s)                  │ │
+│  │                  │    │                                  │ │
+│  │  - Panel layout  │    │  - Full-width tables            │ │
+│  │  - Number keys   │    │  - Vim command mode (:cmd)      │ │
+│  │  - Popup detail  │    │  - Inline detail/log views      │ │
+│  │  - Accordion     │    │  - Autocomplete                 │ │
+│  └─────────────────┘    │  - Sort/filter/wide mode        │ │
+│                          │  - Status dot indicators         │ │
+│                          └─────────────────────────────────┘ │
+├─────────────────────────────────────────────────────────────┤
+│                    Engine (main.rs)                           │
+│                                                              │
+│  Owns: event loop, tick refresh, async action execution      │
+│  Does NOT own: key handling, view state, rendering           │
+│                                                              │
+│  1. Polls events (crossterm + tick timer)                    │
+│  2. Dispatches to theme.handle_key()                         │
+│  3. Executes ThemeAction (async container ops)               │
+│  4. Refreshes data on tick (calls service hooks)             │
+│  5. Calls theme.draw() to render                             │
+├─────────────────────────────────────────────────────────────┤
+│                    App State (app.rs)                         │
+│                                                              │
+│  Core data (shared across all themes):                       │
+│  - containers, images, volumes, networks, pods               │
+│  - system_info, container_stats                              │
+│  - alerts, host CPU/RAM/Swap                                 │
+│                                                              │
+│  Theme-specific state (owned by themes, stored here          │
+│  for simplicity):                                            │
+│  - operator_resource, operator_command_mode, etc.            │
+│  - log_view_*, detail_view_*, popup_*                        │
+├─────────────────────────────────────────────────────────────┤
+│                   Service Layer                              │
+│                                                              │
+│  Provides hooks — stateless business logic:                  │
+│  - ContainerService: list, start, stop, restart, remove,     │
+│    get_detail, get_logs, get_stats                           │
+│  - ImageService: list, pull, remove                          │
+│  - VolumeService: list, create, remove                       │
+│  - NetworkService: list, create, remove                      │
+│  - SystemService: info, disk_usage                           │
+│  - ComposeService: detect_projects, up, down                 │
+│  - PodService: list, create, start, stop, remove             │
+├─────────────────────────────────────────────────────────────┤
+│                Container Runtime (trait)                      │
+│                                                              │
+│  ContainerRuntime trait — unified API for Docker & Podman    │
+│  ┌──────────────┐  ┌──────────────────────────────────────┐ │
+│  │    Docker     │  │           Podman                     │ │
+│  │   (bollard)   │  │   (bollard + CLI for pods)           │ │
+│  └──────────────┘  └──────────────────────────────────────┘ │
+│                                                              │
+│  Local:  /var/run/docker.sock                                │
+│          /run/user/{uid}/podman/podman.sock                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Core Principle: Engine = Hooks, Theme = Everything Else
+
+### What the Engine Does
+- Provides **service hooks** (async functions to fetch/mutate container data)
+- Runs the **event loop** (poll crossterm events, tick timer)
+- Dispatches `theme.handle_key()` — does NOT interpret keys itself
+- Executes **ThemeAction** requests (async container operations)
+- Refreshes data on tick (calls service hooks, updates App state)
+- Calls `theme.draw()` to render each frame
+
+### What the Engine Does NOT Do
+- Handle keys (no `if key == 'l' { open logs }` in main.rs)
+- Own view state (no scroll positions, view modes, UI state)
+- Decide rendering (no layout decisions)
+
+### What Themes Do
+- **ALL key handling** — navigation, commands, scroll, filter, sort
+- **ALL view state** — scroll positions, follow mode, command input, filter text
+- **ALL rendering** — layout, colors, widgets, popups vs inline views
+- **Request data** from engine via `ThemeAction` enum
+- **Request actions** via `ThemeAction` (stop, restart, remove, exec, fetch logs)
+
+### ThemeAction — How Themes Talk to the Engine
+
+```rust
+pub enum ThemeAction {
+    /// Key was handled by the theme. Engine does nothing.
+    Consumed,
+
+    /// Theme wants to quit the application.
+    Quit,
+
+    /// Theme wants to open a popup (dashboard theme uses this).
+    OpenPopup { title: String, content: Vec<String> },
+
+    /// Theme wants async data or action — engine fulfills it.
+    /// (Future: FetchLogs, FetchDetail, StopContainer, etc.)
+    NotHandled,  // Falls through to engine's global action handler
+}
+```
+
+### Theme Trait
+
+```rust
+pub trait Theme: Send + Sync {
+    /// Display name of the theme.
+    fn name(&self) -> &str;
+
+    /// Render the full UI frame.
+    fn draw(&self, frame: &mut Frame, app: &App, config: &DockctlConfig);
+
+    /// Handle a key event. Returns ThemeAction.
+    fn handle_key(&self, key: KeyEvent, app: &mut App, config: &DockctlConfig) -> ThemeAction;
+}
+```
 
 ## Tech Stack
 
@@ -13,119 +138,52 @@ dockctl is a fast, terminal-native container management tool that replaces Docke
 |-------|-------|---------|
 | TUI Framework | `ratatui` + `crossterm` | Cross-platform terminal rendering |
 | Container API | `bollard` | Async Docker/Podman API via Unix socket |
+| System Stats | `sysinfo` | Real host CPU/RAM/Swap metrics |
 | Async Runtime | `tokio` | Event loop, streaming, concurrency |
 | CLI Args | `clap` | Startup flags, configuration |
 | Serialization | `serde` / `serde_json` / `toml` | API payloads + config |
 | Errors | `anyhow` / `thiserror` | Error handling |
 
-## Architecture Layers
+## Themes
 
-```
-┌─────────────────────────────────────────────────────┐
-│                     TUI Layer                        │
-│  ┌───────┬──────────┬────────┬────────┬───────────┐ │
-│  │Sidebar│ Main View│ Detail │ Logs   │ Stats     │ │
-│  │(tabs) │ (table)  │ Panel  │ Panel  │ Panel     │ │
-│  └───────┴──────────┴────────┴────────┴───────────┘ │
-├─────────────────────────────────────────────────────┤
-│                App State (shared)                    │
-│   containers, images, volumes, networks, pods, events│
-├─────────────────────────────────────────────────────┤
-│            Container Runtime (trait)                  │
-│  ┌──────────────┐  ┌──────────────────────────────┐ │
-│  │    Docker     │  │          Podman              │ │
-│  │   (bollard)   │  │   (bollard, compat API)      │ │
-│  └──────────────┘  └──────────────────────────────┘ │
-├─────────────────────────────────────────────────────┤
-│               Connection Layer                       │
-│  Local:  /var/run/docker.sock                        │
-│          /run/user/{uid}/podman/podman.sock           │
-└─────────────────────────────────────────────────────┘
-```
+### Operator (K9s-style) — default
+- Full-width resource tables with configurable columns
+- Vim-style `:command` mode with autocomplete
+- Inline detail views and log viewer (not popups)
+- Status dot indicators, sortable columns, wide mode
+- Pulses dashboard (`:status`)
 
-## Multi-Runtime Support
+### Dashboard (lazygit-style)
+- Multi-panel layout: alerts, resources, status (left) + accordion (right)
+- Number keys 1-7 to focus panels
+- Popup-based detail views
 
-dockctl supports Docker and Podman through a unified `ContainerRuntime` trait. Since Podman implements a Docker-compatible API, the `bollard` crate works with both — pointed at different sockets.
-
-### Runtime Detection
-
-On startup, dockctl auto-detects available runtimes:
-1. Check for Docker socket at `/var/run/docker.sock`
-2. Check for Podman socket at `/run/user/{uid}/podman/podman.sock`
-3. Check `docker` / `podman` in PATH
-4. User can override via `--runtime docker|podman` flag or config file
-
-### Docker vs Podman Differences
-
-| Feature | Docker | Podman |
-|---------|--------|--------|
-| Socket path | `/var/run/docker.sock` | `/run/user/{uid}/podman/podman.sock` |
-| Daemon | Always running (dockerd) | Daemonless (socket on-demand) |
-| Rootless | Requires config | Default |
-| Compose | `docker compose` | `podman-compose` / `podman compose` |
-| Pods | N/A | Native pod support (K8s-style) |
-| K8s YAML | N/A | Generate/deploy K8s manifests from pods |
-| Checkpointing | N/A | CRIU checkpoint/restore |
-| API | Docker Engine API | Docker-compatible API |
-
-## Views
-
-### Core Views (v1)
-
-1. **Dashboard** — Running containers overview, system resource usage, engine info, disk usage summary
-2. **Containers** — List, start/stop/restart/remove, logs (live stream), exec shell, inspect, per-container resource stats
-3. **Images** — List, pull, push, tag, remove, build history
-4. **Volumes** — List, create, remove, inspect
-5. **Networks** — List, create, remove, inspect, connected containers, port mapping visualization
-6. **Compose** — Detect compose projects, up/down/restart stacks, per-service logs
-7. **Builds** — Build images from Dockerfile, stream build output, layer caching info
-8. **Pods** — *(Podman only)* Create, manage, inspect pods; generate K8s YAML from pods
-
-## Key Features
-
-- **Real-time stats**: CPU, memory, network I/O, disk I/O per container (sparkline charts)
-- **Log search/filter**: Regex search across live log streams
-- **Container grouping**: Group by Compose project or pod
-- **Quick actions**: Keyboard-driven — `s` stop, `r` restart, `x` remove, `l` logs, `e` exec
-- **Notifications**: Container crash/restart/OOM events shown inline
-- **Event stream**: Real-time updates from container daemon
-
-## Tmux Integration
-
-dockctl works fully standalone. When tmux is detected, additional capabilities are unlocked:
-
-| Action | Without Tmux | With Tmux |
-|--------|-------------|-----------|
-| View logs | Inline panel | Dedicated tmux pane |
-| Exec shell | Suspend TUI, attach | New tmux split pane |
-| Multi-container stats | Tabbed view | Tmux windows per container |
-| Session restore | N/A | Full layout restoration |
-
-### Tmux Features
-
-- Detect tmux session on startup
-- `exec` opens a real shell in a tmux split pane (proper TTY)
-- Log tailing in a dedicated tmux pane
-- Multi-container monitoring across tmux windows
-- Session persistence — save/restore Docker workspace layouts
+### Creating a New Theme
+1. Create `src/themes/mytheme/mod.rs`
+2. Implement the `Theme` trait (`name`, `draw`, `handle_key`)
+3. Register in `src/themes/mod.rs` → `create_theme()`
+4. Use service hooks via `ThemeAction` for async operations
+5. Store view state in App or theme-local state
 
 ## Configuration
 
-dockctl uses a TOML config file at `~/.config/dockctl/config.toml`:
+Config loaded from: `./config.toml` → `~/.config/dockctl/config.toml` → OS config dir
 
 ```toml
 [general]
 default_runtime = "auto"          # auto | docker | podman
 refresh_interval_ms = 1000
-theme = "default"
+theme = "operator"                # operator | dashboard
 
-[keybindings]
-stop = "s"
-restart = "r"
-remove = "x"
-logs = "l"
-exec = "e"
-search = "/"
+[layout]
+left_panel_percent = 22           # dashboard theme: left panel width
+
+[columns]
+containers = ["Name", "State", "Ports", "CPU", "Memory", "ID", "Status"]
+containers_wide = ["Name", "Image", "State", "Ports", "CPU", "Memory", "ID", "Command", "Status", "Created"]
+images = ["Repository", "Tag", "ID", "Size", "Created"]
+volumes = ["Name", "Driver", "Mountpoint", "Created"]
+networks = ["Name", "ID", "Driver", "Scope", "Containers"]
 ```
 
 ## Project Structure
@@ -133,96 +191,66 @@ search = "/"
 ```
 dockctl/
 ├── Cargo.toml
+├── config.toml                    # Local config (project-level)
 ├── src/
-│   ├── main.rs                # Entry point, arg parsing
-│   ├── app.rs                 # App state machine
-│   ├── config.rs              # Config file parsing (TOML)
-│   ├── event.rs               # Input + container event handling
-│   ├── ui/
-│   │   ├── mod.rs
-│   │   ├── dashboard.rs       # Dashboard view
-│   │   ├── containers.rs      # Container list + detail
-│   │   ├── images.rs          # Image management
-│   │   ├── volumes.rs         # Volume management
-│   │   ├── networks.rs        # Network management
-│   │   ├── compose.rs         # Compose project view
-│   │   ├── builds.rs          # Build view
-│   │   ├── pods.rs            # Pods view (Podman only)
-│   │   ├── logs.rs            # Log viewer widget
-│   │   └── stats.rs           # Stats/charts widget
+│   ├── main.rs                    # Engine: event loop, action executor
+│   ├── app.rs                     # App state (core data + theme state)
+│   ├── config.rs                  # Config parsing (TOML)
+│   ├── event.rs                   # Event handler (crossterm + tick)
+│   ├── themes/
+│   │   ├── mod.rs                 # Theme trait + create_theme()
+│   │   ├── dashboard/mod.rs       # Dashboard theme (lazygit-style)
+│   │   └── operator/mod.rs        # Operator theme (K9s-style)
+│   ├── ui/                        # Shared rendering utilities
+│   │   ├── mod.rs                 # Shared helpers + dashboard renderer
+│   │   ├── alerts.rs              # Alerts panel (dashboard)
+│   │   ├── resources.rs           # Resources panel (dashboard)
+│   │   ├── status.rs              # Status panel (dashboard)
+│   │   ├── containers.rs          # Container table (dashboard)
+│   │   ├── images.rs              # Image table (dashboard)
+│   │   ├── volumes.rs             # Volume table (dashboard)
+│   │   ├── networks.rs            # Network table (dashboard)
+│   │   ├── preview.rs             # Detail content generators
+│   │   ├── logs.rs                # Log viewer widget
+│   │   └── stats.rs               # Stats widget
 │   ├── runtime/
-│   │   ├── mod.rs             # ContainerRuntime trait
-│   │   ├── docker.rs          # Docker backend (bollard → docker.sock)
-│   │   ├── podman.rs          # Podman backend (bollard → podman.sock)
-│   │   └── detect.rs          # Auto-detect available runtimes
+│   │   ├── mod.rs                 # ContainerRuntime trait + types
+│   │   ├── docker.rs              # Docker backend (bollard)
+│   │   ├── podman.rs              # Podman backend (bollard + CLI)
+│   │   └── detect.rs              # Auto-detect runtimes
 │   ├── services/
-│   │   ├── mod.rs
-│   │   ├── containers.rs      # Container operations
-│   │   ├── images.rs          # Image operations
-│   │   ├── volumes.rs         # Volume operations
-│   │   ├── networks.rs        # Network operations
-│   │   ├── compose.rs         # Compose operations
-│   │   ├── pods.rs            # Pod operations (Podman)
-│   │   └── system.rs          # System/engine info
+│   │   ├── mod.rs                 # Service exports
+│   │   ├── containers.rs          # Container hooks
+│   │   ├── images.rs              # Image hooks
+│   │   ├── volumes.rs             # Volume hooks
+│   │   ├── networks.rs            # Network hooks
+│   │   ├── compose.rs             # Compose hooks
+│   │   ├── pods.rs                # Pod hooks
+│   │   └── system.rs              # System hooks
 │   └── tmux/
-│       ├── mod.rs             # Tmux detection + integration
-│       ├── panes.rs           # Pane management
-│       └── sessions.rs        # Session save/restore
+│       ├── mod.rs                 # Tmux detection
+│       ├── panes.rs               # Pane management
+│       └── sessions.rs            # Session save/restore
 ```
 
 ## Design Principles
 
-1. **Speed** — Rust for performance, async for non-blocking I/O
-2. **Universal** — Works with Docker and Podman through unified abstraction
-3. **Cross-terminal** — Works in any terminal via crossterm backend
-4. **Keyboard-first** — Every action accessible via keyboard shortcuts
-5. **Progressive enhancement** — Works standalone, better with tmux
-6. **Minimal footprint** — Single binary, no runtime dependencies beyond the container engine
-7. **Configurable** — Keybindings, themes, host profiles, all via TOML config
+1. **Engine = Hooks** — Core provides service hooks, themes consume them
+2. **Theme = Everything Else** — ALL key handling, view state, rendering in themes
+3. **Speed** — Rust for performance, async for non-blocking I/O
+4. **Universal** — Docker and Podman through unified runtime trait
+5. **Cross-terminal** — Works in any terminal via crossterm
+6. **Keyboard-first** — Every action accessible via keyboard
+7. **Configurable** — Themes, columns, keybindings, layout via TOML
+8. **Extensible** — New themes implement one trait
 
----
+## Future
 
-## Future Improvements
-
-Features planned for post-v1 releases:
-
-### Multi-Host Support
-- **SSH tunneling** — `dockctl --host ssh://user@server` (tunnels socket over SSH)
-- **TCP** — `dockctl --host tcp://server:2375`
-- **Host profiles** — Save named connections in config: `dockctl --profile production`
-- **Host switcher** — Switch between hosts from within the TUI via keybinding
-
-### Image Security Scanning
-- **Vulnerability scanning** — Integrate with trivy or grype to scan images
-- **Scan results view** — Severity breakdown (critical/high/medium/low) per image
-- **Scan on pull** — Optionally auto-scan images when pulled
-
-### Registry Browser
-- **Search** — Search Docker Hub, GHCR, or private registries
-- **Browse tags** — View available tags, architectures, and sizes
-- **Pull from browser** — Pull images directly from the registry view
-
-### Container File Browser
-- Browse files inside a container without exec
-- View/download individual files
-- Tmux-enhanced: opens in a split pane
-
-### Prune Manager
-- **Preview mode** — See exactly what will be deleted and how much space is reclaimed
-- **Selective prune** — Choose which categories to clean (images, containers, volumes, build cache)
-- **Scheduled prune** — Configure auto-prune rules in config
-
-### Resource History
-- Historical CPU/memory charts, not just real-time snapshots
-- Per-container usage trends over time
-- Export stats to CSV/JSON
-
-### Container Diff
-- Show filesystem changes since container creation
-- Layer-by-layer diff view
-
-### Plugin System
-- **Script plugins** — External scripts (any language) invoked via stdin/stdout JSON protocol
-- **WASM plugins** — Sandboxed WebAssembly plugins for custom views or actions
-- **Plugin directory** — `~/.config/dockctl/plugins/`
-- **Use cases** — Custom dashboards, alerting integrations, CI/CD triggers, cost monitoring
+- Multi-host support (SSH/TCP)
+- Image security scanning (trivy/grype)
+- Registry browser
+- Container file browser
+- Prune manager
+- Resource history / trends
+- Plugin system (WASM/script)
+- More themes (community-contributed)
