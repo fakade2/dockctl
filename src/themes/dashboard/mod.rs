@@ -100,35 +100,41 @@ fn dashboard_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) ->
         // Keybindings help
         (KeyCode::Char('?'), _) => ThemeAction::OpenPopup {
             title: "Keybindings".to_string(),
-            content: vec![
-                "Navigation".to_string(),
-                "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}".to_string(),
-                "1-7          Focus panel".to_string(),
-                "Tab          Next panel".to_string(),
-                "Shift+Tab    Previous panel".to_string(),
-                "j / Down     Move down".to_string(),
-                "k / Up       Move up".to_string(),
-                "h / Left     Scroll columns left".to_string(),
-                "l / Right    Scroll columns right".to_string(),
-                String::new(),
-                "Actions".to_string(),
-                "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}".to_string(),
-                "e / Enter    Explain (detail popup)".to_string(),
-                "q            Quit (or close popup)".to_string(),
-                "/            Search".to_string(),
-                "?            This help".to_string(),
-                String::new(),
-                "Container Actions (panel 4)".to_string(),
-                "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}".to_string(),
-                "s            Stop container".to_string(),
-                "r            Restart container".to_string(),
-                "x            Remove container".to_string(),
-                "l            View logs".to_string(),
-                "E            Exec into container (tmux)".to_string(),
-            ],
+            content: dashboard_help_lines(),
         },
 
         // Everything else — not handled (main loop processes container actions, explain, search, etc.)
         _ => ThemeAction::NotHandled,
     }
+}
+
+fn dashboard_help_lines() -> Vec<String> {
+    let sep = "─────────────────────────────────";
+    vec![
+        "Navigation".into(),
+        sep.into(),
+        "1-7          Focus panel".into(),
+        "Tab          Next panel".into(),
+        "Shift+Tab    Previous panel".into(),
+        "j / ↓        Move down".into(),
+        "k / ↑        Move up".into(),
+        "h / ←        Scroll columns left".into(),
+        "l / →        Scroll columns right".into(),
+        String::new(),
+        "Actions".into(),
+        sep.into(),
+        "e / Enter    Explain (detail popup)".into(),
+        "d            Describe".into(),
+        "/            Search".into(),
+        "?            This help".into(),
+        "q            Quit (or close popup)".into(),
+        String::new(),
+        "Container Actions (panel 4)".into(),
+        sep.into(),
+        "s            Stop container".into(),
+        "r            Restart container".into(),
+        "x            Remove container".into(),
+        "l            View logs".into(),
+        "E            Exec into container (tmux)".into(),
+    ]
 }
