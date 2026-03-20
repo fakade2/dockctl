@@ -633,22 +633,49 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let mem_color = percentage_color(mem_pct);
     let swap_color = percentage_color(swap_pct);
 
-    let row2_left: Vec<Span> = vec![
-        Span::styled(" CPU: ", dim),
-        Span::styled(format!("{:.1}%", cpu_pct), Style::default().fg(cpu_color)),
-        Span::styled("  RAM: ", dim),
-        Span::styled(format!("{:.1}%", mem_pct), Style::default().fg(mem_color)),
-        Span::styled("  Swap: ", dim),
-        Span::styled(format!("{:.1}%", swap_pct), Style::default().fg(swap_color)),
-    ];
+    let key_hint = Style::default().fg(Color::Cyan);
 
-    let row2_right: Vec<Span> = if let Some(info) = &app.system_info {
-        vec![
-            Span::styled(format!("{} cores", info.cpus), dim),
-            Span::raw(" "),
-        ]
+    let (row2_left, row2_right): (Vec<Span>, Vec<Span>) = if app.log_view_active {
+        // Show tail shortcuts when log view is open
+        let lines_count = app.log_view_lines.len();
+        (
+            vec![
+                Span::styled(" Tail: ", dim),
+                Span::styled("0", key_hint),
+                Span::styled("=all ", dim),
+                Span::styled("1", key_hint),
+                Span::styled("=50 ", dim),
+                Span::styled("2", key_hint),
+                Span::styled("=100 ", dim),
+                Span::styled("3", key_hint),
+                Span::styled("=200 ", dim),
+                Span::styled("4", key_hint),
+                Span::styled("=500 ", dim),
+                Span::styled("5", key_hint),
+                Span::styled("=1k ", dim),
+            ],
+            vec![Span::styled(format!("{} lines ", lines_count), dim)],
+        )
     } else {
-        vec![Span::raw(" ")]
+        // Normal: CPU/RAM/Swap stats
+        (
+            vec![
+                Span::styled(" CPU: ", dim),
+                Span::styled(format!("{:.1}%", cpu_pct), Style::default().fg(cpu_color)),
+                Span::styled("  RAM: ", dim),
+                Span::styled(format!("{:.1}%", mem_pct), Style::default().fg(mem_color)),
+                Span::styled("  Swap: ", dim),
+                Span::styled(format!("{:.1}%", swap_pct), Style::default().fg(swap_color)),
+            ],
+            if let Some(info) = &app.system_info {
+                vec![
+                    Span::styled(format!("{} cores", info.cpus), dim),
+                    Span::raw(" "),
+                ]
+            } else {
+                vec![Span::raw(" ")]
+            },
+        )
     };
 
     let row2_left_len: usize = row2_left.iter().map(|s| s.width()).sum();
