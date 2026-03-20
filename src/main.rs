@@ -169,8 +169,7 @@ async fn main() -> Result<()> {
                         }
                         KeyCode::Char('G') => {
                             app.log_view_follow = true;
-                            app.log_view_scroll =
-                                app.log_view_lines.len().saturating_sub(1) as u16;
+                            app.log_view_scroll = app.log_view_lines.len().saturating_sub(1) as u16;
                         }
                         _ => {}
                     }
