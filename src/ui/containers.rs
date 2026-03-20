@@ -1,8 +1,8 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
     widgets::{Cell, Row, Table},
-    Frame,
 };
 
 use crate::app::{App, PanelId};
@@ -64,25 +64,23 @@ pub fn draw_container_panel(
                     "CPU" => {
                         let pct = app.container_stats.get(&c.id).map(|(cpu, _)| *cpu);
                         match pct {
-                            Some(p) => {
-                                Cell::from(format!("{:.1}%", p)).style(Style::default().fg(percentage_color(p)))
-                            }
+                            Some(p) => Cell::from(format!("{:.1}%", p))
+                                .style(Style::default().fg(percentage_color(p))),
                             None => Cell::from("--").style(Style::default().fg(Color::DarkGray)),
                         }
                     }
                     "Memory" => {
                         let mem = app.container_stats.get(&c.id).map(|(_, m)| *m);
                         match mem {
-                            Some(m) => {
-                                Cell::from(crate::ui::format_bytes(m)).style(Style::default().fg(Color::Cyan))
-                            }
+                            Some(m) => Cell::from(crate::ui::format_bytes(m))
+                                .style(Style::default().fg(Color::Cyan)),
                             None => Cell::from("--").style(Style::default().fg(Color::DarkGray)),
                         }
                     }
-                    "ID" => Cell::from(short_id(&c.id))
-                        .style(Style::default().fg(Color::DarkGray)),
-                    "Command" => Cell::from(c.command.clone())
-                        .style(Style::default().fg(Color::DarkGray)),
+                    "ID" => Cell::from(short_id(&c.id)).style(Style::default().fg(Color::DarkGray)),
+                    "Command" => {
+                        Cell::from(c.command.clone()).style(Style::default().fg(Color::DarkGray))
+                    }
                     _ => Cell::from(""),
                 })
                 .collect();

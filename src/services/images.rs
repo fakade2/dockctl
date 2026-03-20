@@ -59,7 +59,9 @@ impl ImageService {
         let images = self.runtime.list_images().await?;
         Ok(images
             .into_iter()
-            .filter(|img| img.repo_tags.is_empty() || img.repo_tags.iter().all(|t| t == "<none>:<none>"))
+            .filter(|img| {
+                img.repo_tags.is_empty() || img.repo_tags.iter().all(|t| t == "<none>:<none>")
+            })
             .collect())
     }
 

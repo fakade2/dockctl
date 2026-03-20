@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
 
 use crate::app::{App, PanelId};
@@ -59,9 +59,7 @@ pub fn draw_resources_panel(frame: &mut Frame, area: Rect, app: &App, is_focused
                 Span::styled(" running  ", Style::default().fg(Color::Green)),
                 Span::styled(
                     format!("{}", stopped),
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" stopped", Style::default().fg(Color::Red)),
             ],

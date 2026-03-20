@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
 
 use crate::runtime::ContainerStats;
@@ -54,9 +54,7 @@ pub fn draw_stats(area: Rect, frame: &mut Frame, stats: &ContainerStats) {
             Span::raw("  "),
             Span::styled(
                 format!("{:.1}%", stats.cpu_percent),
-                Style::default()
-                    .fg(cpu_color)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(cpu_color).add_modifier(Modifier::BOLD),
             ),
             Span::raw(" "),
             cpu_bar,
@@ -78,9 +76,7 @@ pub fn draw_stats(area: Rect, frame: &mut Frame, stats: &ContainerStats) {
             Span::raw("  "),
             Span::styled(
                 format!("{:.1}%", mem_pct),
-                Style::default()
-                    .fg(mem_color)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(mem_color).add_modifier(Modifier::BOLD),
             ),
             Span::raw(" "),
             mem_bar,

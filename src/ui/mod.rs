@@ -11,11 +11,11 @@ pub mod status;
 pub mod volumes;
 
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Wrap},
-    Frame,
 };
 
 use crate::app::{App, PanelId};
@@ -119,16 +119,44 @@ fn draw_right_accordion(frame: &mut Frame, area: Rect, app: &App, config: &Dockc
 
         match panel {
             PanelId::Containers => {
-                containers::draw_container_panel(frame, chunks[i], app, is_expanded, is_focused, &config.columns.containers);
+                containers::draw_container_panel(
+                    frame,
+                    chunks[i],
+                    app,
+                    is_expanded,
+                    is_focused,
+                    &config.columns.containers,
+                );
             }
             PanelId::Images => {
-                images::draw_image_panel(frame, chunks[i], app, is_expanded, is_focused, &config.columns.images);
+                images::draw_image_panel(
+                    frame,
+                    chunks[i],
+                    app,
+                    is_expanded,
+                    is_focused,
+                    &config.columns.images,
+                );
             }
             PanelId::Volumes => {
-                volumes::draw_volume_panel(frame, chunks[i], app, is_expanded, is_focused, &config.columns.volumes);
+                volumes::draw_volume_panel(
+                    frame,
+                    chunks[i],
+                    app,
+                    is_expanded,
+                    is_focused,
+                    &config.columns.volumes,
+                );
             }
             PanelId::Networks => {
-                networks::draw_network_panel(frame, chunks[i], app, is_expanded, is_focused, &config.columns.networks);
+                networks::draw_network_panel(
+                    frame,
+                    chunks[i],
+                    app,
+                    is_expanded,
+                    is_focused,
+                    &config.columns.networks,
+                );
             }
             _ => {}
         }
@@ -333,7 +361,9 @@ pub(crate) fn visible_column_count(width: u16, total: usize) -> usize {
 /// Style for a selected row in a table.
 pub(crate) fn selected_row_style(is_focused: bool, is_selected: bool) -> Style {
     if is_focused && is_selected {
-        Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     }
@@ -342,7 +372,12 @@ pub(crate) fn selected_row_style(is_focused: bool, is_selected: bool) -> Style {
 /// Format a scroll indicator like " [1-4/8]".
 pub(crate) fn format_scroll_hint(start: usize, visible: usize, total: usize) -> String {
     if total > visible {
-        format!(" [{}-{}/{}]", start + 1, (start + visible).min(total), total)
+        format!(
+            " [{}-{}/{}]",
+            start + 1,
+            (start + visible).min(total),
+            total
+        )
     } else {
         String::new()
     }
@@ -352,14 +387,24 @@ pub(crate) fn format_scroll_hint(start: usize, visible: usize, total: usize) -> 
 pub(crate) fn create_table_header(columns: &[String]) -> Row<'static> {
     let cells: Vec<Cell> = columns
         .iter()
-        .map(|c| Cell::from(format!(" {}", c)).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+        .map(|c| {
+            Cell::from(format!(" {}", c)).style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+        })
         .collect();
     Row::new(cells).height(1).bottom_margin(1)
 }
 
 /// Truncate a Docker/Podman ID, stripping sha256: prefix.
 pub(crate) fn short_id(id: &str) -> String {
-    id.strip_prefix("sha256:").unwrap_or(id).chars().take(12).collect()
+    id.strip_prefix("sha256:")
+        .unwrap_or(id)
+        .chars()
+        .take(12)
+        .collect()
 }
 
 /// Color based on percentage thresholds.

@@ -1,8 +1,8 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
     widgets::{Cell, Row, Table},
-    Frame,
 };
 
 use crate::app::{App, PanelId};
@@ -50,8 +50,9 @@ pub fn draw_volume_panel(
                 .map(|col| match col.as_str() {
                     "Name" => Cell::from(format!(" {}", vol.name))
                         .style(Style::default().fg(Color::White)),
-                    "Driver" => Cell::from(vol.driver.clone())
-                        .style(Style::default().fg(Color::Yellow)),
+                    "Driver" => {
+                        Cell::from(vol.driver.clone()).style(Style::default().fg(Color::Yellow))
+                    }
                     "Mountpoint" => Cell::from(truncate_str(&vol.mountpoint, 40))
                         .style(Style::default().fg(Color::DarkGray)),
                     "Created" => Cell::from(vol.created_at.clone())
@@ -84,8 +85,11 @@ pub fn draw_volume_panel(
             PanelId::Volumes.number(),
             is_focused,
         ))
-        .row_highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD));
+        .row_highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
 
     frame.render_widget(table, area);
 }
-

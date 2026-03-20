@@ -1,8 +1,8 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
     widgets::{Cell, Row, Table},
-    Frame,
 };
 
 use crate::app::{App, PanelId};
@@ -38,41 +38,45 @@ pub fn draw_image_panel(
 
     let header = create_table_header(visible_cols);
 
-    let rows: Vec<Row> = app
-        .images
-        .iter()
-        .enumerate()
-        .map(|(i, img)| {
-            let style = selected_row_style(is_focused, i == selected);
+    let rows: Vec<Row> =
+        app.images
+            .iter()
+            .enumerate()
+            .map(|(i, img)| {
+                let style = selected_row_style(is_focused, i == selected);
 
-            let cells: Vec<Cell> = visible_cols
-                .iter()
-                .map(|col| match col.as_str() {
-                    "Repository" => {
-                        let tag = img.repo_tags.first()
-                            .map(|t| t.split(':').next().unwrap_or(t).to_string())
-                            .unwrap_or_else(|| "<none>".into());
-                        Cell::from(format!(" {}", tag)).style(Style::default().fg(Color::White))
-                    }
-                    "Tag" => {
-                        let tag = img.repo_tags.first()
-                            .and_then(|t| t.split(':').nth(1))
-                            .unwrap_or("<none>");
-                        Cell::from(tag.to_string()).style(Style::default().fg(Color::DarkGray))
-                    }
-                    "ID" => Cell::from(short_id(&img.id))
-                        .style(Style::default().fg(Color::DarkGray)),
-                    "Size" => Cell::from(format_bytes(img.size))
-                        .style(Style::default().fg(Color::Yellow)),
-                    "Created" => Cell::from(format_timestamp_age(img.created))
-                        .style(Style::default().fg(Color::DarkGray)),
-                    _ => Cell::from(""),
-                })
-                .collect();
+                let cells: Vec<Cell> = visible_cols
+                    .iter()
+                    .map(|col| match col.as_str() {
+                        "Repository" => {
+                            let tag = img
+                                .repo_tags
+                                .first()
+                                .map(|t| t.split(':').next().unwrap_or(t).to_string())
+                                .unwrap_or_else(|| "<none>".into());
+                            Cell::from(format!(" {}", tag)).style(Style::default().fg(Color::White))
+                        }
+                        "Tag" => {
+                            let tag = img
+                                .repo_tags
+                                .first()
+                                .and_then(|t| t.split(':').nth(1))
+                                .unwrap_or("<none>");
+                            Cell::from(tag.to_string()).style(Style::default().fg(Color::DarkGray))
+                        }
+                        "ID" => Cell::from(short_id(&img.id))
+                            .style(Style::default().fg(Color::DarkGray)),
+                        "Size" => Cell::from(format_bytes(img.size))
+                            .style(Style::default().fg(Color::Yellow)),
+                        "Created" => Cell::from(format_timestamp_age(img.created))
+                            .style(Style::default().fg(Color::DarkGray)),
+                        _ => Cell::from(""),
+                    })
+                    .collect();
 
-            Row::new(cells).style(style)
-        })
-        .collect();
+                Row::new(cells).style(style)
+            })
+            .collect();
 
     let col_widths: Vec<Constraint> = visible_cols
         .iter()
@@ -95,8 +99,11 @@ pub fn draw_image_panel(
             PanelId::Images.number(),
             is_focused,
         ))
-        .row_highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD));
+        .row_highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
 
     frame.render_widget(table, area);
 }
-

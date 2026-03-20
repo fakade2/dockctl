@@ -11,7 +11,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Only create a release if version changed
   check-version:
     name: Check version
     runs-on: ubuntu-latest
@@ -20,23 +19,50 @@ jobs:
       tag_exists: ${{ steps.check_tag.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Get version from Cargo.toml
         id: version
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//' | sed 's/"//')
           echo "version=v${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Check if tag exists
         id: check_tag
         run: |
-          if git ls-remote --tags origin | grep -q "refs/tags/v$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//' | sed 's/"//'))"; then
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//' | sed 's/"//')
+          if git tag -l "v${VERSION}" | grep -q "v${VERSION}"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --tags origin | grep -q "refs/tags/v${VERSION}$"; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+  create-tag:
+    name: Create tag
+    needs: check-version
+    if: needs.check-version.outputs.tag_exists == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and push tag
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
+
   build:
     name: Build ${{ matrix.target }}
-    needs: check-version
+    needs: [check-version, create-tag]
     if: needs.check-version.outputs.tag_exists == 'false'
     runs-on: ${{ matrix.os }}
     strategy:
@@ -53,6 +79,8 @@ jobs:
             name: dockctl-linux-amd64
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-version.outputs.version }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -92,19 +120,21 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
 
-      - name: Create release
+      - name: Create release with auto-generated notes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ needs.check-version.outputs.version }}"
 
-          # Generate checksums
+          # Flatten artifact directories
           cd dist
           for dir in */; do
             mv "$dir"/* . 2>/dev/null || true
@@ -113,7 +143,7 @@ jobs:
           sha256sum dockctl-* > checksums.txt
           cd ..
 
-          # Create tag and release
+          # Create release on the existing tag with auto-generated notes
           gh release create "$VERSION" \
             --title "$VERSION" \
             --generate-notes \

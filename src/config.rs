@@ -6,24 +6,13 @@ use std::path::PathBuf;
 // Top-level config
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct DockctlConfig {
     pub general: GeneralConfig,
     pub keybindings: KeybindingsConfig,
     pub layout: LayoutConfig,
     pub columns: ColumnsConfig,
-}
-
-impl Default for DockctlConfig {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            keybindings: KeybindingsConfig::default(),
-            layout: LayoutConfig::default(),
-            columns: ColumnsConfig::default(),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -46,7 +35,8 @@ impl Default for GeneralConfig {
         Self {
             default_runtime: "auto".to_string(),
             refresh_interval_ms: 1000,
-            theme: "default".to_string(),
+            // Valid values: "dashboard" (lazygit-style), "operator" (k9s-style)
+            theme: "dashboard".to_string(),
         }
     }
 }
@@ -115,9 +105,13 @@ impl Default for LayoutConfig {
 #[serde(default)]
 pub struct ColumnsConfig {
     pub containers: Vec<String>,
+    pub containers_wide: Vec<String>, // extra columns in wide mode
     pub images: Vec<String>,
+    pub images_wide: Vec<String>,
     pub volumes: Vec<String>,
+    pub volumes_wide: Vec<String>,
     pub networks: Vec<String>,
+    pub networks_wide: Vec<String>,
 }
 
 impl Default for ColumnsConfig {
@@ -133,6 +127,18 @@ impl Default for ColumnsConfig {
                 "ID".into(),
                 "Status".into(),
             ],
+            containers_wide: vec![
+                "Name".into(),
+                "Image".into(),
+                "State".into(),
+                "Ports".into(),
+                "CPU".into(),
+                "Memory".into(),
+                "ID".into(),
+                "Command".into(),
+                "Status".into(),
+                "Created".into(),
+            ],
             images: vec![
                 "Repository".into(),
                 "Tag".into(),
@@ -140,11 +146,27 @@ impl Default for ColumnsConfig {
                 "Size".into(),
                 "Created".into(),
             ],
+            images_wide: vec![
+                "Repository".into(),
+                "Tag".into(),
+                "ID".into(),
+                "Size".into(),
+                "Created".into(),
+                "Digests".into(),
+            ],
             volumes: vec![
                 "Name".into(),
                 "Driver".into(),
                 "Mountpoint".into(),
                 "Created".into(),
+            ],
+            volumes_wide: vec![
+                "Name".into(),
+                "Driver".into(),
+                "Mountpoint".into(),
+                "Created".into(),
+                "Scope".into(),
+                "Labels".into(),
             ],
             networks: vec![
                 "Name".into(),
@@ -152,6 +174,15 @@ impl Default for ColumnsConfig {
                 "Driver".into(),
                 "Scope".into(),
                 "Containers".into(),
+            ],
+            networks_wide: vec![
+                "Name".into(),
+                "ID".into(),
+                "Driver".into(),
+                "Scope".into(),
+                "Containers".into(),
+                "Internal".into(),
+                "IPv6".into(),
             ],
         }
     }
@@ -161,9 +192,26 @@ impl Default for ColumnsConfig {
 // Loading
 // ---------------------------------------------------------------------------
 
-/// Return the canonical path for the config file:
-/// `~/.config/dockctl/config.toml`
+/// Resolve the config file path. Priority:
+/// 1. `./config.toml` (project directory — where cargo run is executed)
+/// 2. `~/.config/dockctl/config.toml` (XDG standard)
+/// 3. OS config dir (e.g. `~/Library/Application Support/dockctl/config.toml` on macOS)
 fn config_path() -> Option<PathBuf> {
+    // 1. Check current directory first
+    let local = PathBuf::from("config.toml");
+    if local.exists() {
+        return Some(local);
+    }
+
+    // 2. Check ~/.config/dockctl/ (XDG, works on all platforms)
+    if let Some(home) = dirs::home_dir() {
+        let xdg = home.join(".config").join("dockctl").join("config.toml");
+        if xdg.exists() {
+            return Some(xdg);
+        }
+    }
+
+    // 3. Fall back to OS config dir
     dirs::config_dir().map(|d| d.join("dockctl").join("config.toml"))
 }
 

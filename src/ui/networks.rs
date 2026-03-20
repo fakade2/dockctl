@@ -1,8 +1,8 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
     widgets::{Cell, Row, Table},
-    Frame,
 };
 
 use crate::app::{App, PanelId};
@@ -50,8 +50,9 @@ pub fn draw_network_panel(
                 .map(|col| match col.as_str() {
                     "Name" => Cell::from(format!(" {}", net.name))
                         .style(Style::default().fg(Color::White)),
-                    "ID" => Cell::from(short_id(&net.id))
-                        .style(Style::default().fg(Color::DarkGray)),
+                    "ID" => {
+                        Cell::from(short_id(&net.id)).style(Style::default().fg(Color::DarkGray))
+                    }
                     "Driver" => {
                         let color = match net.driver.as_str() {
                             "bridge" => Color::Green,
@@ -63,12 +64,16 @@ pub fn draw_network_panel(
                         };
                         Cell::from(net.driver.clone()).style(Style::default().fg(color))
                     }
-                    "Scope" => Cell::from(net.scope.clone())
-                        .style(Style::default().fg(Color::DarkGray)),
+                    "Scope" => {
+                        Cell::from(net.scope.clone()).style(Style::default().fg(Color::DarkGray))
+                    }
                     "Containers" => {
                         let count = net.containers.len();
-                        Cell::from(format!("{}", count))
-                            .style(Style::default().fg(if count > 0 { Color::Green } else { Color::DarkGray }))
+                        Cell::from(format!("{}", count)).style(Style::default().fg(if count > 0 {
+                            Color::Green
+                        } else {
+                            Color::DarkGray
+                        }))
                     }
                     _ => Cell::from(""),
                 })
@@ -99,8 +104,11 @@ pub fn draw_network_panel(
             PanelId::Networks.number(),
             is_focused,
         ))
-        .row_highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD));
+        .row_highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
 
     frame.render_widget(table, area);
 }
-

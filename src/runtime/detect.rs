@@ -27,8 +27,12 @@ pub async fn detect_runtime(
 ) -> Result<Box<dyn ContainerRuntime>> {
     if let Some(rt) = override_type {
         return match rt {
-            RuntimeType::Docker => connect_docker().map(|r| -> Box<dyn ContainerRuntime> { Box::new(r) }),
-            RuntimeType::Podman => connect_podman().map(|r| -> Box<dyn ContainerRuntime> { Box::new(r) }),
+            RuntimeType::Docker => {
+                connect_docker().map(|r| -> Box<dyn ContainerRuntime> { Box::new(r) })
+            }
+            RuntimeType::Podman => {
+                connect_podman().map(|r| -> Box<dyn ContainerRuntime> { Box::new(r) })
+            }
         };
     }
 
@@ -77,14 +81,14 @@ fn try_docker() -> Option<DockerRuntime> {
     }
 
     // Also honour $DOCKER_HOST if set.
-    if let Ok(host) = std::env::var("DOCKER_HOST") {
-        if host.starts_with("unix://") {
-            let path = host.trim_start_matches("unix://");
-            if Path::new(path).exists() {
-                debug!(path, "found Docker socket via DOCKER_HOST");
-                if let Ok(rt) = DockerRuntime::connect_with_socket(path) {
-                    return Some(rt);
-                }
+    if let Ok(host) = std::env::var("DOCKER_HOST")
+        && host.starts_with("unix://")
+    {
+        let path = host.trim_start_matches("unix://");
+        if Path::new(path).exists() {
+            debug!(path, "found Docker socket via DOCKER_HOST");
+            if let Ok(rt) = DockerRuntime::connect_with_socket(path) {
+                return Some(rt);
             }
         }
     }

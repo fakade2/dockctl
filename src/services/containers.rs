@@ -64,7 +64,9 @@ impl ContainerService {
     /// Fetch the last `tail` lines of a container's logs.
     /// Defaults to 200 lines when `tail` is `None`.
     pub async fn get_logs(&self, id: &str, tail: Option<usize>) -> Result<String> {
-        self.runtime.container_logs(id, Some(tail.unwrap_or(200))).await
+        self.runtime
+            .container_logs(id, Some(tail.unwrap_or(200)))
+            .await
     }
 
     /// Point-in-time resource stats for a container.
@@ -88,7 +90,9 @@ impl ContainerService {
 
     /// Group containers by their Compose project label, if any.
     /// Containers without a project label are grouped under `"(standalone)"`.
-    pub async fn group_by_compose_project(&self) -> Result<std::collections::HashMap<String, Vec<ContainerSummary>>> {
+    pub async fn group_by_compose_project(
+        &self,
+    ) -> Result<std::collections::HashMap<String, Vec<ContainerSummary>>> {
         let all = self.list_all().await?;
         let mut groups: std::collections::HashMap<String, Vec<ContainerSummary>> =
             std::collections::HashMap::new();
@@ -97,11 +101,7 @@ impl ContainerService {
             let detail = self.runtime.inspect_container(&container.id).await;
             let project = detail
                 .ok()
-                .and_then(|d| {
-                    d.labels
-                        .get("com.docker.compose.project")
-                        .cloned()
-                })
+                .and_then(|d| d.labels.get("com.docker.compose.project").cloned())
                 .unwrap_or_else(|| "(standalone)".to_string());
             groups.entry(project).or_default().push(container);
         }

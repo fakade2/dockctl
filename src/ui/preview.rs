@@ -1,6 +1,10 @@
 use crate::app::{Alert, AlertLevel, App};
-use crate::runtime::{ContainerDetail, ContainerSummary, ImageSummary, NetworkSummary, VolumeSummary};
-use crate::ui::{container_display_name, format_bytes, format_ports, format_timestamp_age, short_id};
+use crate::runtime::{
+    ContainerDetail, ContainerSummary, ImageSummary, NetworkSummary, VolumeSummary,
+};
+use crate::ui::{
+    container_display_name, format_bytes, format_ports, format_timestamp_age, short_id,
+};
 
 // ─── Popup content helpers (return Vec<String> for use with App::open_popup) ─
 
@@ -21,7 +25,11 @@ pub fn resource_detail_lines(app: &App, selected: usize) -> Vec<String> {
     match selected {
         0 => {
             let total = app.containers.len();
-            let running = app.containers.iter().filter(|c| c.state == "running").count();
+            let running = app
+                .containers
+                .iter()
+                .filter(|c| c.state == "running")
+                .count();
             let stopped = total - running;
             vec![
                 "Containers".to_string(),
@@ -106,8 +114,14 @@ pub fn container_detail_lines(detail: &ContainerDetail) -> Vec<String> {
     lines.push(format!("Command:    {}", full_cmd));
     lines.push(String::new());
 
-    lines.push(format!("Running:    {}", if detail.state.running { "yes" } else { "no" }));
-    lines.push(format!("Paused:     {}", if detail.state.paused { "yes" } else { "no" }));
+    lines.push(format!(
+        "Running:    {}",
+        if detail.state.running { "yes" } else { "no" }
+    ));
+    lines.push(format!(
+        "Paused:     {}",
+        if detail.state.paused { "yes" } else { "no" }
+    ));
     lines.push(format!("ExitCode:   {}", detail.state.exit_code));
     lines.push(format!("StartedAt:  {}", detail.state.started_at));
     if !detail.state.finished_at.is_empty() && detail.state.finished_at != "0001-01-01T00:00:00Z" {

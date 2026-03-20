@@ -43,17 +43,14 @@ impl EventHandler {
                 // `spawn_blocking` so we don't stall the tokio runtime.
                 let has_event = {
                     let tick = tick_rate;
-                    tokio::task::spawn_blocking(move || {
-                        event::poll(tick).unwrap_or(false)
-                    })
-                    .await
-                    .unwrap_or(false)
+                    tokio::task::spawn_blocking(move || event::poll(tick).unwrap_or(false))
+                        .await
+                        .unwrap_or(false)
                 };
 
                 if has_event {
                     // Read the event (non-blocking after a successful poll).
-                    let read_result = tokio::task::spawn_blocking(|| event::read())
-                        .await;
+                    let read_result = tokio::task::spawn_blocking(event::read).await;
 
                     match read_result {
                         Ok(Ok(Event::Key(key))) => {

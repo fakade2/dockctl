@@ -185,6 +185,29 @@ pub struct App {
     // Runtime capabilities
     pub supports_pods: bool,
 
+    // Operator theme state
+    pub operator_resource: String,
+    pub operator_command_mode: bool,
+    pub operator_command_input: String,
+    pub operator_filter: String,
+    pub operator_filter_active: bool,
+
+    // View history (for Esc-back navigation)
+    pub view_history: Vec<String>, // stack of previous operator_resource values
+
+    // Sort state
+    pub sort_column: Option<String>, // which column is sorted
+    pub sort_ascending: bool,        // sort direction
+
+    // Wide mode (show extra columns)
+    pub wide_mode: bool,
+
+    // Inline detail view (K9s-style — replaces table, not a popup)
+    pub detail_view_active: bool,
+    pub detail_view_title: String,
+    pub detail_view_content: Vec<String>,
+    pub detail_view_scroll: u16,
+
     // Lifecycle
     pub should_quit: bool,
 }
@@ -234,8 +257,83 @@ impl App {
             dangling_images_count: 0,
 
             supports_pods,
+
+            operator_resource: "containers".to_string(),
+            operator_command_mode: false,
+            operator_command_input: String::new(),
+            operator_filter: String::new(),
+            operator_filter_active: false,
+
+            view_history: Vec::new(),
+            sort_column: None,
+            sort_ascending: true,
+            wide_mode: false,
+            detail_view_active: false,
+            detail_view_title: String::new(),
+            detail_view_content: Vec::new(),
+            detail_view_scroll: 0,
+
             should_quit: false,
         }
+    }
+
+    // ------------------------------------------------------------------
+    // View history (Esc-back navigation)
+    // ------------------------------------------------------------------
+
+    /// Push current resource to history and switch to new one (for Esc-back).
+    pub fn push_view(&mut self, new_resource: &str) {
+        self.view_history.push(self.operator_resource.clone());
+        self.operator_resource = new_resource.to_string();
+    }
+
+    /// Pop back to previous view. Returns true if there was a history entry.
+    pub fn pop_view(&mut self) -> bool {
+        if let Some(prev) = self.view_history.pop() {
+            self.operator_resource = prev;
+            true
+        } else {
+            false
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Sort
+    // ------------------------------------------------------------------
+
+    /// Toggle sort on a column. If already sorted by this column, reverse direction.
+    pub fn toggle_sort(&mut self, column: &str) {
+        if self.sort_column.as_deref() == Some(column) {
+            self.sort_ascending = !self.sort_ascending;
+        } else {
+            self.sort_column = Some(column.to_string());
+            self.sort_ascending = true;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Wide mode
+    // ------------------------------------------------------------------
+
+    /// Toggle wide mode.
+    pub fn toggle_wide_mode(&mut self) {
+        self.wide_mode = !self.wide_mode;
+    }
+
+    /// Open an inline detail view (replaces the table, K9s-style).
+    pub fn open_detail_view(&mut self, title: String, content: Vec<String>) {
+        self.detail_view_active = true;
+        self.detail_view_title = title;
+        self.detail_view_content = content;
+        self.detail_view_scroll = 0;
+    }
+
+    /// Close the inline detail view and return to the table.
+    pub fn close_detail_view(&mut self) {
+        self.detail_view_active = false;
+        self.detail_view_content.clear();
+        self.detail_view_title.clear();
+        self.detail_view_scroll = 0;
     }
 
     // ------------------------------------------------------------------
@@ -547,15 +645,18 @@ mod tests {
         // After 7 steps from Alerts we should be back at Alerts
         assert_eq!(visited.first(), visited.last());
         // All 7 panels should appear in the first 7 entries
-        let unique: std::collections::HashSet<PanelId> =
-            visited[..7].iter().copied().collect();
+        let unique: std::collections::HashSet<PanelId> = visited[..7].iter().copied().collect();
         assert_eq!(unique.len(), 7);
     }
 
     #[test]
     fn item_navigation_per_panel() {
         let mut app = App::new(false);
-        app.containers = vec![make_container("a"), make_container("b"), make_container("c")];
+        app.containers = vec![
+            make_container("a"),
+            make_container("b"),
+            make_container("c"),
+        ];
         app.images = vec![make_image("x"), make_image("y")];
 
         // Navigate in Containers panel
@@ -613,10 +714,7 @@ mod tests {
         assert!(app.popup_title.is_empty());
         assert!(app.popup_content.is_empty());
 
-        app.open_popup(
-            "Test Popup".into(),
-            vec!["line 1".into(), "line 2".into()],
-        );
+        app.open_popup("Test Popup".into(), vec!["line 1".into(), "line 2".into()]);
         assert!(app.show_popup);
         assert_eq!(app.popup_title, "Test Popup");
         assert_eq!(app.popup_content.len(), 2);
@@ -671,7 +769,10 @@ mod tests {
             );
         }
         // Every panel is in exactly one column
-        assert_eq!(PanelId::LEFT.len() + PanelId::RIGHT.len(), PanelId::ALL.len());
+        assert_eq!(
+            PanelId::LEFT.len() + PanelId::RIGHT.len(),
+            PanelId::ALL.len()
+        );
     }
 
     #[test]
@@ -775,10 +876,120 @@ mod tests {
     #[test]
     fn all_labels_are_nonempty() {
         for &panel in PanelId::ALL {
-            assert!(
-                !panel.label().is_empty(),
-                "{panel:?} has an empty label"
-            );
+            assert!(!panel.label().is_empty(), "{panel:?} has an empty label");
         }
+    }
+
+    #[test]
+    fn view_history_push_pop() {
+        let mut app = App::new(false);
+        assert_eq!(app.operator_resource, "containers");
+
+        // Push two views
+        app.push_view("images");
+        assert_eq!(app.operator_resource, "images");
+
+        app.push_view("volumes");
+        assert_eq!(app.operator_resource, "volumes");
+
+        // Pop back — should restore "images"
+        assert!(app.pop_view());
+        assert_eq!(app.operator_resource, "images");
+
+        // Pop back — should restore "containers"
+        assert!(app.pop_view());
+        assert_eq!(app.operator_resource, "containers");
+
+        // Pop on empty history — returns false, resource unchanged
+        assert!(!app.pop_view());
+        assert_eq!(app.operator_resource, "containers");
+    }
+
+    #[test]
+    fn toggle_sort_column() {
+        let mut app = App::new(false);
+        assert!(app.sort_column.is_none());
+        assert!(app.sort_ascending);
+
+        // First toggle on "Name" — sets column, ascending
+        app.toggle_sort("Name");
+        assert_eq!(app.sort_column.as_deref(), Some("Name"));
+        assert!(app.sort_ascending);
+
+        // Toggle same column — reverses direction
+        app.toggle_sort("Name");
+        assert_eq!(app.sort_column.as_deref(), Some("Name"));
+        assert!(!app.sort_ascending);
+
+        // Toggle different column — resets to ascending
+        app.toggle_sort("State");
+        assert_eq!(app.sort_column.as_deref(), Some("State"));
+        assert!(app.sort_ascending);
+    }
+
+    #[test]
+    fn toggle_wide_mode() {
+        let mut app = App::new(false);
+        assert!(!app.wide_mode);
+
+        app.toggle_wide_mode();
+        assert!(app.wide_mode);
+
+        app.toggle_wide_mode();
+        assert!(!app.wide_mode);
+    }
+
+    #[test]
+    fn detail_view_open_close() {
+        let mut app = App::new(false);
+        assert!(!app.detail_view_active);
+
+        app.open_detail_view("Test".to_string(), vec!["line1".into(), "line2".into()]);
+        assert!(app.detail_view_active);
+        assert_eq!(app.detail_view_title, "Test");
+        assert_eq!(app.detail_view_content.len(), 2);
+        assert_eq!(app.detail_view_scroll, 0);
+
+        app.detail_view_scroll = 5;
+        app.close_detail_view();
+        assert!(!app.detail_view_active);
+        assert!(app.detail_view_title.is_empty());
+        assert!(app.detail_view_content.is_empty());
+        assert_eq!(app.detail_view_scroll, 0);
+    }
+
+    #[test]
+    fn column_offset_scrolling() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+
+        // Scroll right
+        app.scroll_columns_right(5);
+        assert_eq!(app.panel_column_offset(PanelId::Containers), 1);
+        app.scroll_columns_right(5);
+        assert_eq!(app.panel_column_offset(PanelId::Containers), 2);
+
+        // Scroll right at max (5 columns, should cap at 4)
+        app.scroll_columns_right(5);
+        app.scroll_columns_right(5);
+        app.scroll_columns_right(5); // should not go past 4
+        assert_eq!(app.panel_column_offset(PanelId::Containers), 4);
+
+        // Scroll left
+        app.scroll_columns_left();
+        assert_eq!(app.panel_column_offset(PanelId::Containers), 3);
+
+        // Scroll left to 0
+        for _ in 0..10 {
+            app.scroll_columns_left();
+        }
+        assert_eq!(app.panel_column_offset(PanelId::Containers), 0);
+
+        // Per-panel independence
+        app.active_panel = PanelId::Images;
+        assert_eq!(app.panel_column_offset(PanelId::Images), 0);
+        app.scroll_columns_right(3);
+        assert_eq!(app.panel_column_offset(PanelId::Images), 1);
+        assert_eq!(app.panel_column_offset(PanelId::Containers), 0); // unchanged
     }
 }
