@@ -6,9 +6,10 @@ use ratatui::{
 };
 
 use crate::app::{App, PanelId};
-use crate::ui::{
-    container_display_name, create_table_header, format_ports, format_scroll_hint, panel_block,
-    percentage_color, selected_row_style, short_id, visible_column_count,
+use crate::display::{
+    collapsed_panel_line, container_display_name, create_table_header, format_bytes, format_ports,
+    format_scroll_hint, panel_block, percentage_color, selected_row_style, short_id,
+    visible_column_count,
 };
 
 /// Renders the Containers panel (panel 4, right column).
@@ -26,8 +27,7 @@ pub fn draw_container_panel(
     let title = format!("Containers ({})", count);
 
     if !is_expanded {
-        let line =
-            crate::ui::collapsed_panel_line(&title, PanelId::Containers.number(), is_focused);
+        let line = collapsed_panel_line(&title, PanelId::Containers.number(), is_focused);
         frame.render_widget(ratatui::widgets::Paragraph::new(line), area);
         return;
     }
@@ -73,8 +73,9 @@ pub fn draw_container_panel(
                     "Memory" => {
                         let mem = app.container_stats.get(&c.id).map(|(_, m)| *m);
                         match mem {
-                            Some(m) => Cell::from(crate::ui::format_bytes(m))
-                                .style(Style::default().fg(Color::Cyan)),
+                            Some(m) => {
+                                Cell::from(format_bytes(m)).style(Style::default().fg(Color::Cyan))
+                            }
                             None => Cell::from("--").style(Style::default().fg(Color::DarkGray)),
                         }
                     }

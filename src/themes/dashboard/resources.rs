@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::app::{App, PanelId};
-use crate::ui::{panel_block, selected_row_style};
+use crate::display::{panel_block, selected_row_style};
 
 /// Renders the Resources panel (panel 2, left column).
 ///

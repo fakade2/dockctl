@@ -1,5 +1,21 @@
+mod alerts;
+mod containers;
+mod images;
+mod networks;
+#[allow(dead_code)]
+mod pods;
+mod resources;
+mod status;
+mod volumes;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::Frame;
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+};
 
 use crate::app::{App, InputMode, PanelId};
 use crate::config::DockctlConfig;
@@ -25,14 +41,318 @@ impl Theme for DashboardTheme {
     }
 
     fn draw(&self, frame: &mut Frame, app: &App, config: &DockctlConfig) {
-        // Delegate to the existing lazygit-style UI rendering.
-        crate::ui::draw(frame, app, config);
+        draw(frame, app, config);
     }
 
     fn handle_key(&self, key: KeyEvent, app: &mut App, config: &DockctlConfig) -> ThemeAction {
         dashboard_handle_key(key, app, config)
     }
 }
+
+// ─── Rendering ───────────────────────────────────────────────────────────────
+
+/// Root render function — 7-panel layout with left sidebar, right accordion,
+/// bottom status bar, and optional popup overlay.
+fn draw(frame: &mut Frame, app: &App, config: &DockctlConfig) {
+    let layout = &config.layout;
+    // 1. Split vertically: main area (fills) + bottom status bar (1 line)
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(frame.area());
+
+    let main_area = outer[0];
+    let bar_area = outer[1];
+
+    // 2. Split main area horizontally: left column + right column
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(layout.left_panel_percent),
+            Constraint::Percentage(100 - layout.left_panel_percent),
+        ])
+        .split(main_area);
+
+    let left_area = columns[0];
+    let right_area = columns[1];
+
+    // 3. Left column: 3 panels stacked equally
+    let left_panels = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+        ])
+        .split(left_area);
+
+    alerts::draw_alerts_panel(
+        frame,
+        left_panels[0],
+        app,
+        app.active_panel == PanelId::Alerts,
+    );
+    resources::draw_resources_panel(
+        frame,
+        left_panels[1],
+        app,
+        app.active_panel == PanelId::Resources,
+    );
+    status::draw_status_panel(
+        frame,
+        left_panels[2],
+        app,
+        app.active_panel == PanelId::Status,
+    );
+
+    // 4. Right column: log view, detail view, or accordion
+    if app.log_view_active {
+        draw_log_view(frame, right_area, app);
+    } else if app.detail_view_active {
+        draw_detail_view(frame, right_area, app);
+    } else {
+        draw_right_accordion(frame, right_area, app, config);
+    }
+
+    // 5. Bottom status bar
+    draw_status_bar(frame, bar_area);
+
+    // 6. Popup overlay (if open)
+    if app.show_popup {
+        draw_popup(frame, app);
+    }
+}
+
+/// Renders the right column with accordion behavior: the expanded panel gets
+/// most of the vertical space, collapsed panels get just 3 lines (title bar).
+fn draw_right_accordion(frame: &mut Frame, area: Rect, app: &App, config: &DockctlConfig) {
+    let right_panels = PanelId::RIGHT;
+    let expanded = app.expanded_right;
+
+    // Build constraints: expanded gets Min(8), collapsed get Length(1)
+    let constraints: Vec<Constraint> = right_panels
+        .iter()
+        .map(|&p| {
+            if p == expanded {
+                Constraint::Min(8)
+            } else {
+                Constraint::Length(1)
+            }
+        })
+        .collect();
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+
+    for (i, &panel) in right_panels.iter().enumerate() {
+        let is_expanded = panel == expanded;
+        let is_focused = panel == app.active_panel;
+
+        match panel {
+            PanelId::Containers => {
+                containers::draw_container_panel(
+                    frame,
+                    chunks[i],
+                    app,
+                    is_expanded,
+                    is_focused,
+                    &config.columns.containers,
+                );
+            }
+            PanelId::Images => {
+                images::draw_image_panel(
+                    frame,
+                    chunks[i],
+                    app,
+                    is_expanded,
+                    is_focused,
+                    &config.columns.images,
+                );
+            }
+            PanelId::Volumes => {
+                volumes::draw_volume_panel(
+                    frame,
+                    chunks[i],
+                    app,
+                    is_expanded,
+                    is_focused,
+                    &config.columns.volumes,
+                );
+            }
+            PanelId::Networks => {
+                networks::draw_network_panel(
+                    frame,
+                    chunks[i],
+                    app,
+                    is_expanded,
+                    is_focused,
+                    &config.columns.networks,
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Renders the bottom status bar.
+fn draw_status_bar(frame: &mut Frame, area: Rect) {
+    let version = concat!("dockctl v", env!("CARGO_PKG_VERSION"));
+
+    let key_style = Style::default().fg(Color::Cyan);
+    let label_style = Style::default().fg(Color::DarkGray);
+    let sep_style = Style::default().fg(Color::DarkGray);
+
+    let left_spans = vec![
+        Span::styled(" Explain: ", label_style),
+        Span::styled("e", key_style),
+        Span::styled(" | ", sep_style),
+        Span::styled("Quit: ", label_style),
+        Span::styled("q", key_style),
+        Span::styled(" | ", sep_style),
+        Span::styled("Keybindings: ", label_style),
+        Span::styled("?", key_style),
+    ];
+
+    // Calculate padding to right-align the version string
+    let left_len: usize = left_spans.iter().map(|s| s.width()).sum();
+    let right_len = version.len() + 1;
+    let total_width = area.width as usize;
+    let padding = total_width.saturating_sub(left_len + right_len);
+
+    let mut spans = left_spans;
+    spans.push(Span::raw(" ".repeat(padding)));
+    spans.push(Span::styled(
+        format!("{} ", version),
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let line = Line::from(spans);
+    let bar = Paragraph::new(line);
+    frame.render_widget(bar, area);
+}
+
+/// Renders the log viewer (shared across themes).
+fn draw_log_view(frame: &mut Frame, area: Rect, app: &App) {
+    let follow_indicator = if app.log_view_follow { " [FOLLOW]" } else { "" };
+    let title = format!(
+        " Logs: {} {} ",
+        app.log_view_container_name, follow_indicator
+    );
+
+    let block = Block::default()
+        .title(title)
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(area);
+    let inner_height = inner.height as usize;
+
+    let styled_lines: Vec<Line> = app
+        .log_view_lines
+        .iter()
+        .map(|line| {
+            let style =
+                if line.contains("ERROR") || line.contains("FATAL") || line.contains("PANIC") {
+                    Style::default().fg(Color::Red)
+                } else if line.contains("WARN") {
+                    Style::default().fg(Color::Yellow)
+                } else if line.contains("INFO") {
+                    Style::default().fg(Color::Green)
+                } else if line.contains("DEBUG") || line.contains("TRACE") {
+                    Style::default().fg(Color::DarkGray)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+            Line::from(Span::styled(line.as_str(), style))
+        })
+        .collect();
+
+    let scroll = if app.log_view_follow {
+        styled_lines.len().saturating_sub(inner_height) as u16
+    } else {
+        app.log_view_scroll
+    };
+
+    let paragraph = Paragraph::new(styled_lines)
+        .block(block)
+        .scroll((scroll, 0));
+
+    frame.render_widget(paragraph, area);
+}
+
+/// Renders the inline detail view (shared across themes).
+fn draw_detail_view(frame: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .title(format!(" {} ", app.detail_view_title))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let content_lines: Vec<Line> = app
+        .detail_view_content
+        .iter()
+        .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(Color::White))))
+        .collect();
+
+    let paragraph = Paragraph::new(content_lines)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .scroll((app.detail_view_scroll, 0));
+
+    frame.render_widget(paragraph, area);
+}
+
+/// Renders the popup overlay centered on the screen.
+fn draw_popup(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+
+    // 60% width, 70% height, centered
+    let popup_width = (area.width as u32 * 60 / 100) as u16;
+    let popup_height = (area.height as u32 * 70 / 100) as u16;
+    let x = (area.width.saturating_sub(popup_width)) / 2;
+    let y = (area.height.saturating_sub(popup_height)) / 2;
+
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    // Clear the area behind the popup
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(format!(" {} ", app.popup_title))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let content_lines: Vec<Line> = app
+        .popup_content
+        .iter()
+        .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(Color::White))))
+        .collect();
+
+    let paragraph = Paragraph::new(content_lines)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .scroll((app.popup_scroll, 0));
+
+    frame.render_widget(paragraph, popup_area);
+}
+
+// ─── Key handling ────────────────────────────────────────────────────────────
 
 /// Dashboard-specific key handling.
 ///
@@ -276,7 +596,7 @@ fn dashboard_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) ->
                 let name = app
                     .containers
                     .get(app.selected_index())
-                    .map(|c| crate::ui::container_display_name(&c.names))
+                    .map(|c| crate::display::container_display_name(&c.names))
                     .unwrap_or_default();
                 ThemeAction::FetchLogs {
                     id,

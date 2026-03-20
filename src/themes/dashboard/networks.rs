@@ -6,9 +6,9 @@ use ratatui::{
 };
 
 use crate::app::{App, PanelId};
-use crate::ui::{
-    create_table_header, format_scroll_hint, panel_block, selected_row_style, short_id,
-    visible_column_count,
+use crate::display::{
+    collapsed_panel_line, create_table_header, format_scroll_hint, panel_block, selected_row_style,
+    short_id, visible_column_count,
 };
 
 /// Renders the Networks panel (panel 7, right column).
@@ -25,7 +25,7 @@ pub fn draw_network_panel(
     let title = format!("Networks ({})", count);
 
     if !is_expanded {
-        let line = crate::ui::collapsed_panel_line(&title, PanelId::Networks.number(), is_focused);
+        let line = collapsed_panel_line(&title, PanelId::Networks.number(), is_focused);
         frame.render_widget(ratatui::widgets::Paragraph::new(line), area);
         return;
     }

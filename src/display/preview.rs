@@ -1,9 +1,9 @@
 use crate::app::{Alert, AlertLevel, App};
+use crate::display::{
+    container_display_name, format_bytes, format_ports, format_timestamp_age, short_id,
+};
 use crate::runtime::{
     ContainerDetail, ContainerSummary, ImageSummary, NetworkSummary, VolumeSummary,
-};
-use crate::ui::{
-    container_display_name, format_bytes, format_ports, format_timestamp_age, short_id,
 };
 
 // ─── Popup content helpers (return Vec<String> for use with App::open_popup) ─

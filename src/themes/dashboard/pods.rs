@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::ui::panel_block;
+use crate::display::panel_block;
 
 /// Renders the pod list as a table in the left panel.
 ///

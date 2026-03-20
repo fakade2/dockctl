@@ -9,11 +9,11 @@ use ratatui::{
 
 use crate::app::{AlertLevel, App, PanelId};
 use crate::config::DockctlConfig;
-use crate::themes::{Theme, ThemeAction};
-use crate::ui::{
+use crate::display::{
     container_display_name, format_bytes, format_ports, format_scroll_hint, format_timestamp_age,
     percentage_color, selected_row_style, short_id, truncate_str, visible_column_count,
 };
+use crate::themes::{Theme, ThemeAction};
 
 pub struct OperatorTheme;
 
@@ -376,7 +376,7 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
                 let name = app
                     .containers
                     .get(app.selected_index())
-                    .map(|c| crate::ui::container_display_name(&c.names))
+                    .map(|c| crate::display::container_display_name(&c.names))
                     .unwrap_or_default();
                 ThemeAction::FetchLogs {
                     id,

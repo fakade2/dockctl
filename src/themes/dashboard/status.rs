@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::app::{App, PanelId};
-use crate::ui::{format_bytes, panel_block, percentage_color};
+use crate::display::{format_bytes, panel_block, percentage_color};
 
 /// Renders the Status panel (panel 3, left column).
 ///

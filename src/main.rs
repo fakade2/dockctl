@@ -1,11 +1,11 @@
 pub mod app;
 pub mod config;
+pub mod display;
 pub mod event;
 pub mod runtime;
 pub mod services;
 pub mod themes;
 pub mod tmux;
-pub mod ui;
 
 use std::io;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ use crate::services::{
 use crate::themes::ThemeAction;
 use sysinfo::System;
 
-use crate::ui::preview;
+use crate::display::preview;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -147,10 +147,10 @@ async fn main() -> Result<()> {
                             .containers
                             .iter()
                             .find(|c| c.id == id)
-                            .map(|c| crate::ui::container_display_name(&c.names))
+                            .map(|c| crate::display::container_display_name(&c.names))
                             .unwrap_or_default();
                         let lines = if let Ok(detail) = container_svc.get_detail(&id).await {
-                            crate::ui::preview::container_detail_lines(&detail)
+                            crate::display::preview::container_detail_lines(&detail)
                         } else {
                             vec!["Failed to fetch detail".into()]
                         };
@@ -250,7 +250,7 @@ async fn open_explain(app: &mut App, container_svc: &ContainerService, use_inlin
                 let name = app
                     .containers
                     .get(app.selected_index())
-                    .map(|c| crate::ui::container_display_name(&c.names))
+                    .map(|c| crate::display::container_display_name(&c.names))
                     .unwrap_or_default();
                 (format!("Container: {}", name), detail_lines)
             } else {
