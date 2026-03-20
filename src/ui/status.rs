@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
 
 use crate::app::{App, PanelId};
@@ -27,7 +27,12 @@ pub fn draw_status_panel(frame: &mut Frame, area: Rect, app: &App, is_focused: b
 
     // Row 0: CPU
     let cpu_pct = app.host_cpu_percent;
-    rows.push(make_stat_row("CPU", cpu_pct, None, is_focused && selected == 0));
+    rows.push(make_stat_row(
+        "CPU",
+        cpu_pct,
+        None,
+        is_focused && selected == 0,
+    ));
 
     // Row 1: RAM
     let mem_pct = if app.host_memory_total > 0 {
@@ -38,7 +43,11 @@ pub fn draw_status_panel(frame: &mut Frame, area: Rect, app: &App, is_focused: b
     rows.push(make_stat_row(
         "RAM",
         mem_pct,
-        Some(&format!("{} / {}", format_bytes(app.host_memory_used), format_bytes(app.host_memory_total))),
+        Some(&format!(
+            "{} / {}",
+            format_bytes(app.host_memory_used),
+            format_bytes(app.host_memory_total)
+        )),
         is_focused && selected == 1,
     ));
 
@@ -48,7 +57,11 @@ pub fn draw_status_panel(frame: &mut Frame, area: Rect, app: &App, is_focused: b
         rows.push(make_stat_row(
             "Swap",
             swap_pct,
-            Some(&format!("{} / {}", format_bytes(app.host_swap_used), format_bytes(app.host_swap_total))),
+            Some(&format!(
+                "{} / {}",
+                format_bytes(app.host_swap_used),
+                format_bytes(app.host_swap_total)
+            )),
             is_focused && selected == 2,
         ));
     } else {
@@ -65,7 +78,10 @@ pub fn draw_status_panel(frame: &mut Frame, area: Rect, app: &App, is_focused: b
             rows.push(make_stat_row(
                 "CPU",
                 docker_cpu.min(100.0 * info.cpus as f64),
-                Some(&format!("{} containers / {} cores", info.containers_running, info.cpus)),
+                Some(&format!(
+                    "{} containers / {} cores",
+                    info.containers_running, info.cpus
+                )),
                 is_focused && selected == 3,
             ));
 
@@ -79,7 +95,11 @@ pub fn draw_status_panel(frame: &mut Frame, area: Rect, app: &App, is_focused: b
             rows.push(make_stat_row(
                 "RAM",
                 docker_mem_pct,
-                Some(&format!("{} / {}", format_bytes(docker_mem), format_bytes(info.memory_total))),
+                Some(&format!(
+                    "{} / {}",
+                    format_bytes(docker_mem),
+                    format_bytes(info.memory_total)
+                )),
                 is_focused && selected == 4,
             ));
 
@@ -93,9 +113,21 @@ pub fn draw_status_panel(frame: &mut Frame, area: Rect, app: &App, is_focused: b
             ));
         }
         None => {
-            rows.push(make_label_row("CPU", "connecting...", is_focused && selected == 3));
-            rows.push(make_label_row("RAM", "connecting...", is_focused && selected == 4));
-            rows.push(make_label_row("Disk", "connecting...", is_focused && selected == 5));
+            rows.push(make_label_row(
+                "CPU",
+                "connecting...",
+                is_focused && selected == 3,
+            ));
+            rows.push(make_label_row(
+                "RAM",
+                "connecting...",
+                is_focused && selected == 4,
+            ));
+            rows.push(make_label_row(
+                "Disk",
+                "connecting...",
+                is_focused && selected == 5,
+            ));
         }
     }
 
@@ -106,32 +138,51 @@ pub fn draw_status_panel(frame: &mut Frame, area: Rect, app: &App, is_focused: b
 fn section_header(title: &str) -> Line<'static> {
     Line::from(Span::styled(
         format!(" ── {} ", title),
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
     ))
 }
 
 /// Stat row: " CPU  48.2%  4.2G / 16G "
 /// Shows label, colored percentage, and optional detail text.
 fn make_stat_row(label: &str, pct: f64, detail: Option<&str>, is_selected: bool) -> Line<'static> {
-    let bg = if is_selected { Color::DarkGray } else { Color::Reset };
-    let bold = if is_selected { Modifier::BOLD } else { Modifier::empty() };
+    let bg = if is_selected {
+        Color::DarkGray
+    } else {
+        Color::Reset
+    };
+    let bold = if is_selected {
+        Modifier::BOLD
+    } else {
+        Modifier::empty()
+    };
     let color = percentage_color(pct);
 
     let mut spans = vec![
         Span::styled(
             format!(" {:<4} ", label),
-            Style::default().fg(Color::Cyan).bg(bg).add_modifier(Modifier::BOLD | bold),
+            Style::default()
+                .fg(Color::Cyan)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD | bold),
         ),
         Span::styled(
             format!("{:>5.1}%", pct),
-            Style::default().fg(color).bg(bg).add_modifier(Modifier::BOLD | bold),
+            Style::default()
+                .fg(color)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD | bold),
         ),
     ];
 
     if let Some(d) = detail {
         spans.push(Span::styled(
             format!("  {}", d),
-            Style::default().fg(Color::DarkGray).bg(bg).add_modifier(bold),
+            Style::default()
+                .fg(Color::DarkGray)
+                .bg(bg)
+                .add_modifier(bold),
         ));
     }
 
@@ -140,13 +191,24 @@ fn make_stat_row(label: &str, pct: f64, detail: Option<&str>, is_selected: bool)
 
 /// Simple label + value row without percentage.
 fn make_label_row(label: &str, value: &str, is_selected: bool) -> Line<'static> {
-    let bg = if is_selected { Color::DarkGray } else { Color::Reset };
-    let bold = if is_selected { Modifier::BOLD } else { Modifier::empty() };
+    let bg = if is_selected {
+        Color::DarkGray
+    } else {
+        Color::Reset
+    };
+    let bold = if is_selected {
+        Modifier::BOLD
+    } else {
+        Modifier::empty()
+    };
 
     Line::from(vec![
         Span::styled(
             format!(" {:<4} ", label),
-            Style::default().fg(Color::Cyan).bg(bg).add_modifier(Modifier::BOLD | bold),
+            Style::default()
+                .fg(Color::Cyan)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD | bold),
         ),
         Span::styled(
             value.to_string(),
@@ -154,4 +216,3 @@ fn make_label_row(label: &str, value: &str, is_selected: bool) -> Line<'static> 
         ),
     ])
 }
-

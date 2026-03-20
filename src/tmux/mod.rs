@@ -12,7 +12,7 @@ use anyhow::Result;
 /// Detection is based on the `TMUX` environment variable which tmux always
 /// sets for child processes.
 pub fn is_tmux_available() -> bool {
-    std::env::var("TMUX").map_or(false, |v| !v.is_empty())
+    std::env::var("TMUX").is_ok_and(|v| !v.is_empty())
 }
 
 // ---------------------------------------------------------------------------

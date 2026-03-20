@@ -1,10 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
-    Frame,
 };
 
 use crate::app::{App, PanelId};
@@ -17,6 +17,12 @@ use crate::ui::{
 };
 
 pub struct OperatorTheme;
+
+impl Default for OperatorTheme {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl OperatorTheme {
     pub fn new() -> Self {
@@ -267,7 +273,10 @@ fn describe_selected(app: &App) -> (String, Vec<String>) {
                 ];
                 (title, lines)
             } else {
-                ("No Selection".to_string(), vec!["No container selected".to_string()])
+                (
+                    "No Selection".to_string(),
+                    vec!["No container selected".to_string()],
+                )
             }
         }
         "images" => {
@@ -287,7 +296,10 @@ fn describe_selected(app: &App) -> (String, Vec<String>) {
                 ];
                 (title, lines)
             } else {
-                ("No Selection".to_string(), vec!["No image selected".to_string()])
+                (
+                    "No Selection".to_string(),
+                    vec!["No image selected".to_string()],
+                )
             }
         }
         "volumes" => {
@@ -303,7 +315,10 @@ fn describe_selected(app: &App) -> (String, Vec<String>) {
                 ];
                 (title, lines)
             } else {
-                ("No Selection".to_string(), vec!["No volume selected".to_string()])
+                (
+                    "No Selection".to_string(),
+                    vec!["No volume selected".to_string()],
+                )
             }
         }
         "networks" => {
@@ -325,7 +340,10 @@ fn describe_selected(app: &App) -> (String, Vec<String>) {
                 }
                 (title, lines)
             } else {
-                ("No Selection".to_string(), vec!["No network selected".to_string()])
+                (
+                    "No Selection".to_string(),
+                    vec!["No network selected".to_string()],
+                )
             }
         }
         _ => ("Unknown".to_string(), vec!["Unknown resource".to_string()]),
@@ -384,10 +402,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let left_spans = vec![
         Span::styled(" dockctl ", logo_style),
         Span::styled("   ", Style::default()),
-        Span::styled(
-            format!("Docker > {}", resource_cap),
-            breadcrumb_style,
-        ),
+        Span::styled(format!("Docker > {}", resource_cap), breadcrumb_style),
     ];
 
     let left_len: usize = left_spans.iter().map(|s| s.width()).sum();
@@ -397,10 +412,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut spans = left_spans;
     spans.push(Span::raw(" ".repeat(padding)));
-    spans.push(Span::styled(
-        format!("{} ", runtime_info),
-        info_style,
-    ));
+    spans.push(Span::styled(format!("{} ", runtime_info), info_style));
 
     let line = Line::from(spans);
     let header = Paragraph::new(line).block(
@@ -459,15 +471,9 @@ fn draw_containers_table(frame: &mut Frame, area: Rect, app: &App, columns: &[St
                 .map(|col| match col.as_str() {
                     "Name" => Cell::from(format!(" {}", container_display_name(&c.names)))
                         .style(Style::default().fg(Color::White)),
-                    "Image" => {
-                        Cell::from(c.image.clone()).style(Style::default().fg(Color::Gray))
-                    }
-                    "Status" => {
-                        Cell::from(c.status.clone()).style(Style::default().fg(sc))
-                    }
-                    "State" => {
-                        Cell::from(c.state.clone()).style(Style::default().fg(sc))
-                    }
+                    "Image" => Cell::from(c.image.clone()).style(Style::default().fg(Color::Gray)),
+                    "Status" => Cell::from(c.status.clone()).style(Style::default().fg(sc)),
+                    "State" => Cell::from(c.state.clone()).style(Style::default().fg(sc)),
                     "Ports" => Cell::from(format_ports(&c.ports))
                         .style(Style::default().fg(Color::DarkGray)),
                     "CPU" => {
@@ -475,26 +481,22 @@ fn draw_containers_table(frame: &mut Frame, area: Rect, app: &App, columns: &[St
                         match pct {
                             Some(p) => Cell::from(format!("{:.1}%", p))
                                 .style(Style::default().fg(percentage_color(p))),
-                            None => {
-                                Cell::from("--").style(Style::default().fg(Color::DarkGray))
-                            }
+                            None => Cell::from("--").style(Style::default().fg(Color::DarkGray)),
                         }
                     }
                     "Memory" => {
                         let mem = app.container_stats.get(&c.id).map(|(_, m)| *m);
                         match mem {
-                            Some(m) => Cell::from(format_bytes(m))
-                                .style(Style::default().fg(Color::Cyan)),
-                            None => {
-                                Cell::from("--").style(Style::default().fg(Color::DarkGray))
+                            Some(m) => {
+                                Cell::from(format_bytes(m)).style(Style::default().fg(Color::Cyan))
                             }
+                            None => Cell::from("--").style(Style::default().fg(Color::DarkGray)),
                         }
                     }
-                    "ID" => {
-                        Cell::from(short_id(&c.id)).style(Style::default().fg(Color::DarkGray))
+                    "ID" => Cell::from(short_id(&c.id)).style(Style::default().fg(Color::DarkGray)),
+                    "Command" => {
+                        Cell::from(c.command.clone()).style(Style::default().fg(Color::DarkGray))
                     }
-                    "Command" => Cell::from(c.command.clone())
-                        .style(Style::default().fg(Color::DarkGray)),
                     _ => Cell::from(""),
                 })
                 .collect();
@@ -565,9 +567,7 @@ fn draw_images_table(frame: &mut Frame, area: Rect, app: &App, columns: &[String
                 return true;
             }
             let f = filter.to_lowercase();
-            img.repo_tags
-                .iter()
-                .any(|t| t.to_lowercase().contains(&f))
+            img.repo_tags.iter().any(|t| t.to_lowercase().contains(&f))
                 || short_id(&img.id).contains(&f)
         })
         .collect();
@@ -578,36 +578,35 @@ fn draw_images_table(frame: &mut Frame, area: Rect, app: &App, columns: &[String
         .map(|(display_idx, (_, img))| {
             let style = selected_row_style(true, display_idx == selected);
 
-            let cells: Vec<Cell> = visible_cols
-                .iter()
-                .map(|col| match col.as_str() {
-                    "Repository" => {
-                        let tag = img
-                            .repo_tags
-                            .first()
-                            .map(|t| t.split(':').next().unwrap_or(t).to_string())
-                            .unwrap_or_else(|| "<none>".into());
-                        Cell::from(format!(" {}", tag))
-                            .style(Style::default().fg(Color::White))
-                    }
-                    "Tag" => {
-                        let tag = img
-                            .repo_tags
-                            .first()
-                            .and_then(|t| t.split(':').nth(1))
-                            .unwrap_or("<none>");
-                        Cell::from(tag.to_string())
-                            .style(Style::default().fg(Color::DarkGray))
-                    }
-                    "ID" => Cell::from(short_id(&img.id))
-                        .style(Style::default().fg(Color::DarkGray)),
-                    "Size" => Cell::from(format_bytes(img.size))
-                        .style(Style::default().fg(Color::Yellow)),
-                    "Created" => Cell::from(format_timestamp_age(img.created))
-                        .style(Style::default().fg(Color::DarkGray)),
-                    _ => Cell::from(""),
-                })
-                .collect();
+            let cells: Vec<Cell> =
+                visible_cols
+                    .iter()
+                    .map(|col| match col.as_str() {
+                        "Repository" => {
+                            let tag = img
+                                .repo_tags
+                                .first()
+                                .map(|t| t.split(':').next().unwrap_or(t).to_string())
+                                .unwrap_or_else(|| "<none>".into());
+                            Cell::from(format!(" {}", tag)).style(Style::default().fg(Color::White))
+                        }
+                        "Tag" => {
+                            let tag = img
+                                .repo_tags
+                                .first()
+                                .and_then(|t| t.split(':').nth(1))
+                                .unwrap_or("<none>");
+                            Cell::from(tag.to_string()).style(Style::default().fg(Color::DarkGray))
+                        }
+                        "ID" => Cell::from(short_id(&img.id))
+                            .style(Style::default().fg(Color::DarkGray)),
+                        "Size" => Cell::from(format_bytes(img.size))
+                            .style(Style::default().fg(Color::Yellow)),
+                        "Created" => Cell::from(format_timestamp_age(img.created))
+                            .style(Style::default().fg(Color::DarkGray)),
+                        _ => Cell::from(""),
+                    })
+                    .collect();
 
             Row::new(cells).style(style)
         })
@@ -671,8 +670,7 @@ fn draw_volumes_table(frame: &mut Frame, area: Rect, app: &App, columns: &[Strin
                 return true;
             }
             let f = filter.to_lowercase();
-            vol.name.to_lowercase().contains(&f)
-                || vol.driver.to_lowercase().contains(&f)
+            vol.name.to_lowercase().contains(&f) || vol.driver.to_lowercase().contains(&f)
         })
         .collect();
 
@@ -687,8 +685,9 @@ fn draw_volumes_table(frame: &mut Frame, area: Rect, app: &App, columns: &[Strin
                 .map(|col| match col.as_str() {
                     "Name" => Cell::from(format!(" {}", vol.name))
                         .style(Style::default().fg(Color::White)),
-                    "Driver" => Cell::from(vol.driver.clone())
-                        .style(Style::default().fg(Color::Yellow)),
+                    "Driver" => {
+                        Cell::from(vol.driver.clone()).style(Style::default().fg(Color::Yellow))
+                    }
                     "Mountpoint" => Cell::from(truncate_str(&vol.mountpoint, 40))
                         .style(Style::default().fg(Color::DarkGray)),
                     "Created" => Cell::from(vol.created_at.clone())
@@ -758,8 +757,7 @@ fn draw_networks_table(frame: &mut Frame, area: Rect, app: &App, columns: &[Stri
                 return true;
             }
             let f = filter.to_lowercase();
-            net.name.to_lowercase().contains(&f)
-                || net.driver.to_lowercase().contains(&f)
+            net.name.to_lowercase().contains(&f) || net.driver.to_lowercase().contains(&f)
         })
         .collect();
 
@@ -774,8 +772,9 @@ fn draw_networks_table(frame: &mut Frame, area: Rect, app: &App, columns: &[Stri
                 .map(|col| match col.as_str() {
                     "Name" => Cell::from(format!(" {}", net.name))
                         .style(Style::default().fg(Color::White)),
-                    "ID" => Cell::from(short_id(&net.id))
-                        .style(Style::default().fg(Color::DarkGray)),
+                    "ID" => {
+                        Cell::from(short_id(&net.id)).style(Style::default().fg(Color::DarkGray))
+                    }
                     "Driver" => {
                         let color = match net.driver.as_str() {
                             "bridge" => Color::Green,
@@ -787,17 +786,16 @@ fn draw_networks_table(frame: &mut Frame, area: Rect, app: &App, columns: &[Stri
                         };
                         Cell::from(net.driver.clone()).style(Style::default().fg(color))
                     }
-                    "Scope" => Cell::from(net.scope.clone())
-                        .style(Style::default().fg(Color::DarkGray)),
+                    "Scope" => {
+                        Cell::from(net.scope.clone()).style(Style::default().fg(Color::DarkGray))
+                    }
                     "Containers" => {
                         let count = net.containers.len();
-                        Cell::from(format!("{}", count)).style(Style::default().fg(
-                            if count > 0 {
-                                Color::Green
-                            } else {
-                                Color::DarkGray
-                            },
-                        ))
+                        Cell::from(format!("{}", count)).style(Style::default().fg(if count > 0 {
+                            Color::Green
+                        } else {
+                            Color::DarkGray
+                        }))
                     }
                     _ => Cell::from(""),
                 })
@@ -868,10 +866,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         // Normal footer
         let mut spans = vec![
-            Span::styled(
-                format!(" :{} ", app.operator_resource),
-                key_style,
-            ),
+            Span::styled(format!(" :{} ", app.operator_resource), key_style),
             Span::styled("| ", sep_style),
         ];
 

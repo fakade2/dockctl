@@ -7,6 +7,12 @@ use crate::themes::{Theme, ThemeAction};
 
 pub struct DashboardTheme;
 
+impl Default for DashboardTheme {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DashboardTheme {
     pub fn new() -> Self {
         Self

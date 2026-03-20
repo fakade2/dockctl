@@ -5,13 +5,13 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use bollard::Docker;
 use bollard::container::{
     ListContainersOptions, LogsOptions, RemoveContainerOptions, StatsOptions,
 };
 use bollard::image::{CreateImageOptions, ListImagesOptions, RemoveImageOptions};
 use bollard::network::{CreateNetworkOptions, InspectNetworkOptions, ListNetworksOptions};
 use bollard::volume::{CreateVolumeOptions, ListVolumesOptions, RemoveVolumeOptions};
-use bollard::Docker;
 use futures_util::TryStreamExt;
 
 use super::{
@@ -32,16 +32,15 @@ pub struct DockerRuntime {
 impl DockerRuntime {
     /// Connect to the default Docker socket (`/var/run/docker.sock` on Linux/macOS).
     pub fn connect_default() -> Result<Self> {
-        let client = Docker::connect_with_socket_defaults()
-            .context("failed to connect to Docker socket")?;
+        let client =
+            Docker::connect_with_socket_defaults().context("failed to connect to Docker socket")?;
         Ok(Self { client })
     }
 
     /// Connect to a Docker-compatible socket at an explicit path.
     pub fn connect_with_socket(path: &str) -> Result<Self> {
-        let client =
-            Docker::connect_with_socket(path, 120, bollard::API_DEFAULT_VERSION)
-                .with_context(|| format!("failed to connect to Docker socket at {path}"))?;
+        let client = Docker::connect_with_socket(path, 120, bollard::API_DEFAULT_VERSION)
+            .with_context(|| format!("failed to connect to Docker socket at {path}"))?;
         Ok(Self { client })
     }
 
@@ -97,9 +96,7 @@ fn convert_container_summary(c: bollard::models::ContainerSummary) -> ContainerS
     }
 }
 
-fn convert_container_detail(
-    resp: bollard::models::ContainerInspectResponse,
-) -> ContainerDetail {
+fn convert_container_detail(resp: bollard::models::ContainerInspectResponse) -> ContainerDetail {
     let state = resp.state.as_ref();
     let config = resp.config.as_ref();
 
@@ -124,9 +121,7 @@ fn convert_container_detail(
             dead: state.and_then(|s| s.dead).unwrap_or(false),
             pid: state.and_then(|s| s.pid).unwrap_or(0),
             exit_code: state.and_then(|s| s.exit_code).unwrap_or(0),
-            started_at: state
-                .and_then(|s| s.started_at.clone())
-                .unwrap_or_default(),
+            started_at: state.and_then(|s| s.started_at.clone()).unwrap_or_default(),
             finished_at: state
                 .and_then(|s| s.finished_at.clone())
                 .unwrap_or_default(),
@@ -137,9 +132,7 @@ fn convert_container_detail(
         driver: resp.driver.unwrap_or_default(),
         platform: resp.platform.unwrap_or_default(),
         log_path: resp.log_path.unwrap_or_default(),
-        labels: config
-            .and_then(|c| c.labels.clone())
-            .unwrap_or_default(),
+        labels: config.and_then(|c| c.labels.clone()).unwrap_or_default(),
         env: config.and_then(|c| c.env.clone()).unwrap_or_default(),
     }
 }
@@ -162,9 +155,7 @@ fn calculate_cpu_percent(stats: &bollard::container::Stats) -> f64 {
     }
 }
 
-fn aggregate_network_stats(
-    stats: &bollard::container::Stats,
-) -> (u64, u64) {
+fn aggregate_network_stats(stats: &bollard::container::Stats) -> (u64, u64) {
     let mut rx: u64 = 0;
     let mut tx: u64 = 0;
 
@@ -224,10 +215,7 @@ fn convert_image_inspect_to_summary(img: bollard::models::ImageInspect) -> Image
         repo_digests: img.repo_digests.unwrap_or_default(),
         created,
         size: img.size.unwrap_or(0) as u64,
-        labels: img
-            .config
-            .and_then(|c| c.labels)
-            .unwrap_or_default(),
+        labels: img.config.and_then(|c| c.labels).unwrap_or_default(),
     }
 }
 
@@ -241,10 +229,7 @@ fn convert_volume(vol: bollard::models::Volume) -> VolumeSummary {
             .scope
             .map(|s| s.to_string())
             .unwrap_or_else(|| "local".to_string()),
-        created_at: vol
-            .created_at
-            .map(|d| d.to_string())
-            .unwrap_or_default(),
+        created_at: vol.created_at.map(|d| d.to_string()).unwrap_or_default(),
     }
 }
 
@@ -254,12 +239,7 @@ fn convert_network_summary(net: &bollard::models::Network) -> NetworkSummary {
         .as_ref()
         .map(|c| {
             c.iter()
-                .map(|(id, info)| {
-                    (
-                        id.clone(),
-                        info.name.clone().unwrap_or_default(),
-                    )
-                })
+                .map(|(id, info)| (id.clone(), info.name.clone().unwrap_or_default()))
                 .collect()
         })
         .unwrap_or_default();
@@ -282,12 +262,7 @@ fn convert_network_detail(net: bollard::models::Network) -> NetworkDetail {
         .as_ref()
         .map(|c| {
             c.iter()
-                .map(|(id, info)| {
-                    (
-                        id.clone(),
-                        info.name.clone().unwrap_or_default(),
-                    )
-                })
+                .map(|(id, info)| (id.clone(), info.name.clone().unwrap_or_default()))
                 .collect()
         })
         .unwrap_or_default();
@@ -344,7 +319,10 @@ impl ContainerRuntime for DockerRuntime {
             .await
             .context("failed to list containers")?;
 
-        Ok(containers.into_iter().map(convert_container_summary).collect())
+        Ok(containers
+            .into_iter()
+            .map(convert_container_summary)
+            .collect())
     }
 
     async fn inspect_container(&self, id: &str) -> Result<ContainerDetail> {

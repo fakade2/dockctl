@@ -38,8 +38,8 @@ impl PodmanRuntime {
     /// or `/run/podman/podman.sock` (rootful). On macOS the socket may be at
     /// `$HOME/.local/share/containers/podman/machine/podman.sock`.
     pub fn connect_default() -> Result<Self> {
-        let socket_path = default_podman_socket_path()
-            .context("unable to determine Podman socket path")?;
+        let socket_path =
+            default_podman_socket_path().context("unable to determine Podman socket path")?;
 
         Self::connect_with_socket(&socket_path)
     }
@@ -94,8 +94,7 @@ fn default_podman_socket_path() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         if let Some(home) = dirs::home_dir() {
-            let machine_sock = home
-                .join(".local/share/containers/podman/machine/podman.sock");
+            let machine_sock = home.join(".local/share/containers/podman/machine/podman.sock");
             if machine_sock.exists() {
                 return Some(machine_sock.to_string_lossy().into_owned());
             }
@@ -111,7 +110,13 @@ fn default_podman_socket_path() -> Option<String> {
     // Linux: rootless socket
     #[cfg(target_os = "linux")]
     {
-        let uid = unsafe { libc::getuid() };
+        let uid = std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(1000);
         let rootless = format!("/run/user/{uid}/podman/podman.sock");
         if std::path::Path::new(&rootless).exists() {
             return Some(rootless);
@@ -256,9 +261,7 @@ impl ContainerRuntime for PodmanRuntime {
 
     async fn list_pods(&self) -> Result<Vec<PodSummary>> {
         let json = self
-            .podman_cmd(&[
-                "pod", "ps", "--format", "json", "--no-trunc",
-            ])
+            .podman_cmd(&["pod", "ps", "--format", "json", "--no-trunc"])
             .await
             .context("failed to list pods")?;
 
@@ -266,10 +269,13 @@ impl ContainerRuntime for PodmanRuntime {
             return Ok(Vec::new());
         }
 
-        let raw: Vec<PodmanPodListEntry> = serde_json::from_str(&json)
-            .context("failed to parse `podman pod ps` JSON output")?;
+        let raw: Vec<PodmanPodListEntry> =
+            serde_json::from_str(&json).context("failed to parse `podman pod ps` JSON output")?;
 
-        Ok(raw.into_iter().map(PodmanPodListEntry::into_domain).collect())
+        Ok(raw
+            .into_iter()
+            .map(PodmanPodListEntry::into_domain)
+            .collect())
     }
 
     async fn create_pod(&self, name: &str) -> Result<PodSummary> {

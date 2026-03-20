@@ -561,15 +561,18 @@ mod tests {
         // After 7 steps from Alerts we should be back at Alerts
         assert_eq!(visited.first(), visited.last());
         // All 7 panels should appear in the first 7 entries
-        let unique: std::collections::HashSet<PanelId> =
-            visited[..7].iter().copied().collect();
+        let unique: std::collections::HashSet<PanelId> = visited[..7].iter().copied().collect();
         assert_eq!(unique.len(), 7);
     }
 
     #[test]
     fn item_navigation_per_panel() {
         let mut app = App::new(false);
-        app.containers = vec![make_container("a"), make_container("b"), make_container("c")];
+        app.containers = vec![
+            make_container("a"),
+            make_container("b"),
+            make_container("c"),
+        ];
         app.images = vec![make_image("x"), make_image("y")];
 
         // Navigate in Containers panel
@@ -627,10 +630,7 @@ mod tests {
         assert!(app.popup_title.is_empty());
         assert!(app.popup_content.is_empty());
 
-        app.open_popup(
-            "Test Popup".into(),
-            vec!["line 1".into(), "line 2".into()],
-        );
+        app.open_popup("Test Popup".into(), vec!["line 1".into(), "line 2".into()]);
         assert!(app.show_popup);
         assert_eq!(app.popup_title, "Test Popup");
         assert_eq!(app.popup_content.len(), 2);
@@ -685,7 +685,10 @@ mod tests {
             );
         }
         // Every panel is in exactly one column
-        assert_eq!(PanelId::LEFT.len() + PanelId::RIGHT.len(), PanelId::ALL.len());
+        assert_eq!(
+            PanelId::LEFT.len() + PanelId::RIGHT.len(),
+            PanelId::ALL.len()
+        );
     }
 
     #[test]
@@ -789,10 +792,7 @@ mod tests {
     #[test]
     fn all_labels_are_nonempty() {
         for &panel in PanelId::ALL {
-            assert!(
-                !panel.label().is_empty(),
-                "{panel:?} has an empty label"
-            );
+            assert!(!panel.label().is_empty(), "{panel:?} has an empty label");
         }
     }
 }

@@ -6,24 +6,13 @@ use std::path::PathBuf;
 // Top-level config
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct DockctlConfig {
     pub general: GeneralConfig,
     pub keybindings: KeybindingsConfig,
     pub layout: LayoutConfig,
     pub columns: ColumnsConfig,
-}
-
-impl Default for DockctlConfig {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            keybindings: KeybindingsConfig::default(),
-            layout: LayoutConfig::default(),
-            columns: ColumnsConfig::default(),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

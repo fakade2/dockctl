@@ -277,11 +277,7 @@ pub trait ContainerRuntime: Send + Sync {
 
     /// Fetch the last `tail` lines of logs for a container.
     /// When `tail` is `None`, a backend-chosen default is used.
-    async fn container_logs(
-        &self,
-        id: &str,
-        tail: Option<usize>,
-    ) -> anyhow::Result<String>;
+    async fn container_logs(&self, id: &str, tail: Option<usize>) -> anyhow::Result<String>;
 
     // -- Stats --------------------------------------------------------------
 
@@ -325,11 +321,7 @@ pub trait ContainerRuntime: Send + Sync {
 
     /// Create a network with the given name and driver. Returns a summary of
     /// the newly created network.
-    async fn create_network(
-        &self,
-        name: &str,
-        driver: &str,
-    ) -> anyhow::Result<NetworkSummary>;
+    async fn create_network(&self, name: &str, driver: &str) -> anyhow::Result<NetworkSummary>;
 
     /// Remove a network by ID or name.
     async fn remove_network(&self, id: &str) -> anyhow::Result<()>;

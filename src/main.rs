@@ -15,14 +15,14 @@ use clap::Parser;
 use crossterm::{
     event::{KeyCode, KeyEvent},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 use crate::app::{Alert, AlertLevel, App, InputMode, PanelId};
 use crate::event::{AppEvent, EventHandler};
-use crate::runtime::{detect_runtime, ContainerRuntime, RuntimeType};
+use crate::runtime::{ContainerRuntime, RuntimeType, detect_runtime};
 use crate::services::{
     ContainerService, ImageService, NetworkService, PodService, SystemService, VolumeService,
 };
@@ -32,7 +32,11 @@ use sysinfo::System;
 use crate::ui::preview;
 
 #[derive(Parser, Debug)]
-#[command(name = "dockctl", version, about = "Universal container runtime TUI — Docker & Podman")]
+#[command(
+    name = "dockctl",
+    version,
+    about = "Universal container runtime TUI — Docker & Podman"
+)]
 struct Cli {
     /// Container runtime to use (auto-detected if omitted)
     #[arg(short, long, value_enum)]
@@ -193,40 +197,40 @@ async fn handle_global_key(
     match key.code {
         // Container actions (active when viewing containers in any theme)
         KeyCode::Char('s') if is_container_context => {
-            if let Some(id) = app.selected_container_id() {
-                if let Err(e) = container_svc.stop(&id).await {
-                    tracing::warn!("Failed to stop container {}: {}", id, e);
-                }
+            if let Some(id) = app.selected_container_id()
+                && let Err(e) = container_svc.stop(&id).await
+            {
+                tracing::warn!("Failed to stop container {}: {}", id, e);
             }
         }
         KeyCode::Char('r') if is_container_context => {
-            if let Some(id) = app.selected_container_id() {
-                if let Err(e) = container_svc.restart(&id).await {
-                    tracing::warn!("Failed to restart container {}: {}", id, e);
-                }
+            if let Some(id) = app.selected_container_id()
+                && let Err(e) = container_svc.restart(&id).await
+            {
+                tracing::warn!("Failed to restart container {}: {}", id, e);
             }
         }
         KeyCode::Char('x') if is_container_context => {
-            if let Some(id) = app.selected_container_id() {
-                if let Err(e) = container_svc.remove(&id, true).await {
-                    tracing::warn!("Failed to remove container {}: {}", id, e);
-                }
+            if let Some(id) = app.selected_container_id()
+                && let Err(e) = container_svc.remove(&id, true).await
+            {
+                tracing::warn!("Failed to remove container {}: {}", id, e);
             }
         }
         KeyCode::Char('l') if is_container_context => {
             // Reserved for logs
         }
         KeyCode::Char('E') if is_container_context => {
-            if let Some(id) = app.selected_container_id() {
-                if tmux::is_tmux_available() {
-                    let bin = match runtime.runtime_type() {
-                        RuntimeType::Docker => "docker",
-                        RuntimeType::Podman => "podman",
-                    };
-                    let tmux_int = tmux::TmuxIntegration::new(bin);
-                    if let Err(e) = tmux_int.split_pane_exec(&id, "/bin/sh").await {
-                        tracing::warn!("Failed to exec into container {}: {}", id, e);
-                    }
+            if let Some(id) = app.selected_container_id()
+                && tmux::is_tmux_available()
+            {
+                let bin = match runtime.runtime_type() {
+                    RuntimeType::Docker => "docker",
+                    RuntimeType::Podman => "podman",
+                };
+                let tmux_int = tmux::TmuxIntegration::new(bin);
+                if let Err(e) = tmux_int.split_pane_exec(&id, "/bin/sh").await {
+                    tracing::warn!("Failed to exec into container {}: {}", id, e);
                 }
             }
         }
@@ -260,13 +264,13 @@ async fn open_explain_popup(app: &mut App, container_svc: &ContainerService) {
         PanelId::Resources => {
             app.open_popup(
                 "Resource Detail".to_string(),
-                preview::resource_detail_lines(&app, app.selected_index()),
+                preview::resource_detail_lines(app, app.selected_index()),
             );
         }
         PanelId::Status => {
             app.open_popup(
                 "Status Detail".to_string(),
-                preview::status_detail_lines(&app, app.selected_index()),
+                preview::status_detail_lines(app, app.selected_index()),
             );
         }
         PanelId::Containers => {
@@ -283,10 +287,7 @@ async fn open_explain_popup(app: &mut App, container_svc: &ContainerService) {
         }
         PanelId::Images => {
             if let Some(img) = app.images.get(app.selected_index()) {
-                app.open_popup(
-                    "Image Detail".to_string(),
-                    preview::image_detail_lines(img),
-                );
+                app.open_popup("Image Detail".to_string(), preview::image_detail_lines(img));
             }
         }
         PanelId::Volumes => {
@@ -330,10 +331,10 @@ async fn load_data(
     if let Ok(networks) = network_svc.list().await {
         app.networks = networks;
     }
-    if app.supports_pods {
-        if let Ok(pods) = pod_svc.list().await {
-            app.pods = pods;
-        }
+    if app.supports_pods
+        && let Ok(pods) = pod_svc.list().await
+    {
+        app.pods = pods;
     }
     if let Ok(info) = system_svc.info().await {
         app.system_info = Some(info);
@@ -370,11 +371,8 @@ fn compute_alerts(app: &mut App) {
     }
 
     // Stale images — images not used by any container
-    let used_images: std::collections::HashSet<&str> = app
-        .containers
-        .iter()
-        .map(|c| c.image.as_str())
-        .collect();
+    let used_images: std::collections::HashSet<&str> =
+        app.containers.iter().map(|c| c.image.as_str()).collect();
     app.stale_images_count = app
         .images
         .iter()

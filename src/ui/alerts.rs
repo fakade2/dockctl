@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
 
 use crate::app::{AlertLevel, App, PanelId};
@@ -47,10 +47,7 @@ pub fn draw_alerts_panel(frame: &mut Frame, area: Rect, app: &App, is_focused: b
                     format!(" {} ", indicator),
                     row_style.fg(color).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    alert.message.clone(),
-                    row_style.fg(color),
-                ),
+                Span::styled(alert.message.clone(), row_style.fg(color)),
             ])
         })
         .collect();
