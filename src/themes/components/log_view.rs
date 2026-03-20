@@ -11,7 +11,7 @@ use crate::app::App;
 /// Shared log viewer component — renders color-coded, scrollable container logs.
 /// Supports vertical + horizontal scrolling and a wrap toggle.
 pub fn draw_log_view(frame: &mut Frame, area: Rect, app: &App) {
-    // Clear previous frame content
+    // Clear entire area first — fills every cell with space + default style
     frame.render_widget(Clear, area);
 
     let follow_indicator = if app.log_view_follow { " [FOLLOW]" } else { "" };
@@ -32,7 +32,11 @@ pub fn draw_log_view(frame: &mut Frame, area: Rect, app: &App) {
         .border_style(Style::default().fg(Color::Cyan));
 
     let inner = block.inner(area);
+    frame.render_widget(block, area);
     let inner_height = inner.height as usize;
+
+    // Pad each log line to fill the full inner width so no old content shows through
+    let inner_width = inner.width as usize;
 
     let styled_lines: Vec<Line> = app
         .log_view_lines
@@ -50,31 +54,46 @@ pub fn draw_log_view(frame: &mut Frame, area: Rect, app: &App) {
                 } else {
                     Style::default().fg(Color::White)
                 };
-            Line::from(Span::styled(line.as_str(), style))
+            // Pad line to full width to overwrite all cells
+            let padded = if line.len() < inner_width {
+                format!("{:<width$}", line, width = inner_width)
+            } else {
+                line.clone()
+            };
+            Line::from(Span::styled(padded, style))
         })
         .collect();
 
+    // Also pad empty lines to fill the visible area
+    let total_lines = styled_lines.len();
+    let mut all_lines = styled_lines;
+    if total_lines < inner_height {
+        for _ in 0..(inner_height - total_lines) {
+            all_lines.push(Line::from(Span::styled(
+                " ".repeat(inner_width),
+                Style::default(),
+            )));
+        }
+    }
+
     let v_scroll = if app.log_view_follow {
-        styled_lines.len().saturating_sub(inner_height) as u16
+        all_lines.len().saturating_sub(inner_height) as u16
     } else {
-        // Cap manual scroll to prevent scrolling past content
         app.log_view_scroll
-            .min(styled_lines.len().saturating_sub(inner_height) as u16)
+            .min(all_lines.len().saturating_sub(inner_height) as u16)
     };
 
     let h_scroll = if app.log_view_wrap {
-        0 // no horizontal scroll when wrapping
+        0
     } else {
         app.log_view_h_scroll
     };
 
-    let mut paragraph = Paragraph::new(styled_lines)
-        .block(block)
-        .scroll((v_scroll, h_scroll));
+    let mut paragraph = Paragraph::new(all_lines).scroll((v_scroll, h_scroll));
 
     if app.log_view_wrap {
         paragraph = paragraph.wrap(Wrap { trim: false });
     }
 
-    frame.render_widget(paragraph, area);
+    frame.render_widget(paragraph, inner);
 }
