@@ -321,6 +321,7 @@ pub(super) fn operator_handle_key(
                     ":volumes     :vol  :v           Volume list".into(),
                     ":networks    :net  :n           Network list".into(),
                     ":status      :pu               System pulses/dashboard".into(),
+                    ":pull <ref>                      Pull image".into(),
                     ":q           :quit  :exit       Quit dockctl".into(),
                     String::new(),
                     "Navigation".into(),
@@ -447,6 +448,15 @@ pub(super) fn operator_handle_key(
                 } else {
                     ThemeAction::Consumed
                 }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+
+        // ── Image actions (only when viewing images) ─────
+        (KeyCode::Char('x'), _) if app.operator_resource == "images" => {
+            if let Some(id) = app.selected_image_id() {
+                ThemeAction::RemoveImage { id, force: false }
             } else {
                 ThemeAction::Consumed
             }
@@ -1000,6 +1010,57 @@ mod tests {
         let config = DockctlConfig::default();
         let result = operator_handle_key(key(KeyCode::Char('s')), &mut app, &config);
         assert!(matches!(result, ThemeAction::NotHandled));
+    }
+
+    // ── Image actions ────────────────────────────────────────────────
+
+    #[test]
+    fn x_returns_remove_image_on_images() {
+        let mut app = App::new(false);
+        app.operator_resource = "images".into();
+        app.active_panel = PanelId::Images;
+        app.images = vec![crate::runtime::ImageSummary {
+            id: "img1".into(),
+            repo_tags: vec!["nginx:latest".into()],
+            repo_digests: vec![],
+            size: 100_000,
+            created: 1700000000,
+            labels: std::collections::HashMap::new(),
+        }];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::RemoveImage { id, force: false } if id == "img1"));
+    }
+
+    #[test]
+    fn x_consumed_when_no_images() {
+        let mut app = App::new(false);
+        app.operator_resource = "images".into();
+        app.active_panel = PanelId::Images;
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    #[test]
+    fn x_on_images_not_containers() {
+        // When on images resource, x should remove image, not container
+        let mut app = App::new(false);
+        app.operator_resource = "images".into();
+        app.active_panel = PanelId::Images;
+        app.images = vec![crate::runtime::ImageSummary {
+            id: "img1".into(),
+            repo_tags: vec!["nginx:latest".into()],
+            repo_digests: vec![],
+            size: 100_000,
+            created: 1700000000,
+            labels: std::collections::HashMap::new(),
+        }];
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        // Should be RemoveImage, not RemoveContainer
+        assert!(matches!(result, ThemeAction::RemoveImage { .. }));
     }
 
     // ── Ctrl+C quits ─────────────────────────────────────────────────

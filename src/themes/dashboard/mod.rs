@@ -471,6 +471,15 @@ fn dashboard_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) ->
             content: dashboard_help_lines(),
         },
 
+        // ── Image actions (only when image panel is active) ─────
+        (KeyCode::Char('x'), _) if app.active_panel == PanelId::Images => {
+            if let Some(id) = app.selected_image_id() {
+                ThemeAction::RemoveImage { id, force: false }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+
         // ── Container actions (only when container panel is active) ─────
         (KeyCode::Char('s'), _) if is_container_context => {
             if let Some(id) = app.selected_container_id() {
@@ -560,6 +569,10 @@ fn dashboard_help_lines() -> Vec<String> {
         "x            Remove container".into(),
         "l            View logs".into(),
         "E            Exec into container (tmux)".into(),
+        String::new(),
+        "Image Actions (panel 5)".into(),
+        sep.into(),
+        "x            Remove image".into(),
     ]
 }
 
@@ -991,6 +1004,45 @@ mod tests {
         let config = DockctlConfig::default();
         let result = dashboard_handle_key(key(KeyCode::Char('s')), &mut app, &config);
         assert!(matches!(result, ThemeAction::NotHandled));
+    }
+
+    // ── Image actions ────────────────────────────────────────────────
+
+    #[test]
+    fn x_on_images_returns_remove_image() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Images;
+        app.images = vec![crate::runtime::ImageSummary {
+            id: "img1".into(),
+            repo_tags: vec!["nginx:latest".into()],
+            repo_digests: vec![],
+            size: 100_000,
+            created: 1700000000,
+            labels: std::collections::HashMap::new(),
+        }];
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::RemoveImage { id, force: false } if id == "img1"));
+    }
+
+    #[test]
+    fn x_on_images_consumed_when_empty() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Images;
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    #[test]
+    fn x_on_containers_still_returns_remove_container() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        // Should be RemoveContainer, not RemoveImage
+        assert!(matches!(result, ThemeAction::RemoveContainer { .. }));
     }
 
     // ── Explain ──────────────────────────────────────────────────────

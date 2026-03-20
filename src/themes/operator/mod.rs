@@ -318,6 +318,11 @@ fn draw_command_line(frame: &mut Frame, area: Rect, app: &App) {
             ),
             Span::styled(follow_tag.to_string(), Style::default().fg(Color::Green)),
         ])
+    } else if let Some(ref msg) = app.status_message {
+        Line::from(Span::styled(
+            format!(" {}", msg),
+            Style::default().fg(Color::Yellow),
+        ))
     } else {
         let mut spans = vec![
             Span::styled(":", Style::default().fg(Color::DarkGray)),
@@ -395,6 +400,13 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled("rm ", label_style),
                 Span::styled("l", key_style),
                 Span::styled("logs ", label_style),
+            ]);
+        } else if app.operator_resource == "images" {
+            s.extend(vec![
+                Span::styled("x", key_style),
+                Span::styled("rm ", label_style),
+                Span::styled(":pull <ref>", key_style),
+                Span::styled(" pull ", label_style),
             ]);
         } else if app.operator_resource == "compose" {
             if app.compose_selected_project.is_none() {

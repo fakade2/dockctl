@@ -9,6 +9,7 @@ pub(super) const COMMANDS: &[&str] = &[
     "volumes",
     "networks",
     "status",
+    "pull",
     "q",
     "quit",
     "exit",
@@ -35,6 +36,21 @@ pub(super) fn execute_command(app: &mut App, cmd: &str) -> ThemeAction {
     // Quit commands
     if cmd == "q" || cmd == "quit" || cmd == "exit" {
         return ThemeAction::Quit;
+    }
+
+    // Pull command: `:pull <image_reference>`
+    if cmd.starts_with("pull ") {
+        let reference = cmd.strip_prefix("pull ").unwrap().trim();
+        if !reference.is_empty() {
+            return ThemeAction::PullImage {
+                reference: reference.to_string(),
+            };
+        }
+        return ThemeAction::Consumed;
+    }
+    if cmd == "pull" {
+        // `:pull` with no argument — do nothing
+        return ThemeAction::Consumed;
     }
 
     // Resource switching
@@ -176,6 +192,45 @@ mod tests {
         let result = execute_command(&mut app, "nonexistent");
         assert!(matches!(result, ThemeAction::Consumed));
         assert_eq!(app.operator_resource, original); // unchanged
+    }
+
+    #[test]
+    fn execute_command_pull_with_reference() {
+        let mut app = crate::app::App::new(false);
+        let result = execute_command(&mut app, "pull nginx:latest");
+        assert!(
+            matches!(result, ThemeAction::PullImage { reference } if reference == "nginx:latest")
+        );
+    }
+
+    #[test]
+    fn execute_command_pull_no_reference() {
+        let mut app = crate::app::App::new(false);
+        let result = execute_command(&mut app, "pull");
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    #[test]
+    fn execute_command_pull_empty_reference() {
+        let mut app = crate::app::App::new(false);
+        let result = execute_command(&mut app, "pull   ");
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    #[test]
+    fn execute_command_pull_complex_reference() {
+        let mut app = crate::app::App::new(false);
+        let result = execute_command(&mut app, "pull ghcr.io/owner/repo:v1.2.3");
+        assert!(
+            matches!(result, ThemeAction::PullImage { reference } if reference == "ghcr.io/owner/repo:v1.2.3")
+        );
+    }
+
+    #[test]
+    fn autocomplete_pull() {
+        assert_eq!(autocomplete_suggestion("p"), Some("pull"));
+        assert_eq!(autocomplete_suggestion("pu"), Some("pull"));
+        assert_eq!(autocomplete_suggestion("pull"), Some("pull"));
     }
 
     #[test]

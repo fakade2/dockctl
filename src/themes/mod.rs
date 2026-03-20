@@ -44,6 +44,10 @@ pub enum ThemeAction {
     ComposeDown { working_dir: String },
     /// Theme wants to run `docker compose restart` in a working directory.
     ComposeRestart { working_dir: String },
+    /// Theme wants to pull an image by reference (e.g. "nginx:latest").
+    PullImage { reference: String },
+    /// Theme wants to remove an image by ID.
+    RemoveImage { id: String, force: bool },
 }
 
 /// Trait that all themes must implement.

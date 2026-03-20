@@ -111,6 +111,9 @@ async fn main() -> Result<()> {
         // Handle events
         match events.next().await? {
             AppEvent::Tick => {
+                // Clear transient status messages on tick
+                app.status_message = None;
+
                 // Refresh data for the active panel on tick
                 load_panel_data(
                     &mut app,
@@ -224,6 +227,37 @@ async fn main() -> Result<()> {
                             .await
                         {
                             tracing::warn!("Failed to compose restart: {}", e);
+                        }
+                    }
+                    ThemeAction::PullImage { reference } => {
+                        app.status_message = Some(format!("Pulling {}...", reference));
+                        match image_svc.pull(&reference).await {
+                            Ok(()) => {
+                                app.status_message = Some(format!("Pulled {}", reference));
+                                // Refresh image list immediately
+                                if let Ok(images) = image_svc.list().await {
+                                    app.images = images;
+                                }
+                            }
+                            Err(e) => {
+                                app.status_message = Some(format!("Pull failed: {}", e));
+                                tracing::warn!("Failed to pull image {}: {}", reference, e);
+                            }
+                        }
+                    }
+                    ThemeAction::RemoveImage { id, force } => {
+                        match image_svc.remove(&id, force).await {
+                            Ok(()) => {
+                                app.status_message = Some("Image removed".to_string());
+                                // Refresh image list immediately
+                                if let Ok(images) = image_svc.list().await {
+                                    app.images = images;
+                                }
+                            }
+                            Err(e) => {
+                                app.status_message = Some(format!("Remove failed: {}", e));
+                                tracing::warn!("Failed to remove image {}: {}", id, e);
+                            }
                         }
                     }
                 }
