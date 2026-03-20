@@ -1243,4 +1243,76 @@ mod tests {
         let projects = build_compose_projects(&containers);
         assert!(projects.is_empty());
     }
+
+    #[test]
+    fn build_compose_multiple_projects() {
+        let containers = vec![
+            ContainerSummary {
+                id: "a".into(),
+                name: "web".into(),
+                names: vec!["web".into()],
+                image: "nginx".into(),
+                image_id: "sha256:a".into(),
+                command: "".into(),
+                state: "running".into(),
+                status: "Up".into(),
+                created: 0,
+                ports: vec![],
+                labels: HashMap::from([
+                    ("com.docker.compose.project".into(), "app1".into()),
+                    ("com.docker.compose.service".into(), "web".into()),
+                ]),
+            },
+            ContainerSummary {
+                id: "b".into(),
+                name: "db".into(),
+                names: vec!["db".into()],
+                image: "postgres".into(),
+                image_id: "sha256:b".into(),
+                command: "".into(),
+                state: "exited".into(),
+                status: "Exited".into(),
+                created: 0,
+                ports: vec![],
+                labels: HashMap::from([
+                    ("com.docker.compose.project".into(), "app2".into()),
+                    ("com.docker.compose.service".into(), "db".into()),
+                ]),
+            },
+        ];
+        let projects = build_compose_projects(&containers);
+        assert_eq!(projects.len(), 2);
+        // Sorted alphabetically
+        assert_eq!(projects[0].name, "app1");
+        assert_eq!(projects[1].name, "app2");
+        assert_eq!(projects[0].running_count, 1);
+        assert_eq!(projects[1].running_count, 0);
+    }
+
+    #[test]
+    fn build_compose_service_ports_preserved() {
+        let containers = vec![ContainerSummary {
+            id: "a".into(),
+            name: "web".into(),
+            names: vec!["web".into()],
+            image: "nginx".into(),
+            image_id: "sha256:a".into(),
+            command: "".into(),
+            state: "running".into(),
+            status: "Up".into(),
+            created: 0,
+            ports: vec![crate::runtime::PortMapping {
+                ip: Some("0.0.0.0".into()),
+                private_port: 80,
+                public_port: Some(8080),
+                port_type: "tcp".into(),
+            }],
+            labels: HashMap::from([
+                ("com.docker.compose.project".into(), "myapp".into()),
+                ("com.docker.compose.service".into(), "web".into()),
+            ]),
+        }];
+        let projects = build_compose_projects(&containers);
+        assert_eq!(projects[0].services[0].ports.len(), 1);
+    }
 }

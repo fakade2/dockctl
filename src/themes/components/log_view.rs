@@ -331,4 +331,41 @@ mod tests {
 
         // Should not panic — scrollbar renders on the border column
     }
+
+    #[test]
+    fn log_view_no_scrollbar_when_content_fits() {
+        let mut app = crate::app::App::new(false);
+        app.open_log_view("abc".into(), "test".into(), vec!["short".into()]);
+        app.log_view_follow = false;
+
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                draw_log_view(frame, frame.area(), &app);
+            })
+            .unwrap();
+
+        // Content fits in area — no scrollbar should render
+        // Just verify no panic
+    }
+
+    #[test]
+    fn log_view_h_scroll_capped_in_renderer() {
+        let mut app = crate::app::App::new(false);
+        app.open_log_view("abc".into(), "test".into(), vec!["short".into()]);
+        app.log_view_follow = false;
+        app.log_view_h_scroll = 1000; // way past content
+
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Should not panic — scroll is capped in renderer
+        terminal
+            .draw(|frame| {
+                draw_log_view(frame, frame.area(), &app);
+            })
+            .unwrap();
+    }
 }

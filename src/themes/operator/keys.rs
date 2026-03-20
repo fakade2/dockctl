@@ -1190,4 +1190,159 @@ mod tests {
         operator_handle_key(key(KeyCode::Char('h')), &mut app, &config);
         assert!(app.panel_column_offset(app.active_panel) < offset_after_right);
     }
+
+    // ── Compose key handling ────────────────────────────────────────
+
+    // Compose: Enter drills into project
+    #[test]
+    fn compose_enter_drills_into_project() {
+        let mut app = App::new(false);
+        app.operator_resource = "compose".into();
+        app.compose_projects = vec![crate::app::ComposeProject {
+            name: "myapp".into(),
+            working_dir: "/home/myapp".into(),
+            services: vec![],
+            running_count: 0,
+            total_count: 0,
+        }];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Enter), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert_eq!(app.compose_selected_project, Some("myapp".into()));
+    }
+
+    // Compose: Esc goes back from service to project level
+    #[test]
+    fn compose_esc_back_to_projects() {
+        let mut app = App::new(false);
+        app.operator_resource = "compose".into();
+        app.compose_selected_project = Some("myapp".into());
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert_eq!(app.compose_selected_project, None);
+    }
+
+    // Compose: u returns ComposeUp
+    #[test]
+    fn compose_u_returns_up() {
+        let mut app = App::new(false);
+        app.operator_resource = "compose".into();
+        app.compose_projects = vec![crate::app::ComposeProject {
+            name: "myapp".into(),
+            working_dir: "/home/myapp".into(),
+            services: vec![],
+            running_count: 0,
+            total_count: 0,
+        }];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('u')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::ComposeUp { .. }));
+    }
+
+    // Compose: x returns ComposeDown
+    #[test]
+    fn compose_x_returns_down() {
+        let mut app = App::new(false);
+        app.operator_resource = "compose".into();
+        app.compose_projects = vec![crate::app::ComposeProject {
+            name: "myapp".into(),
+            working_dir: "/home/myapp".into(),
+            services: vec![],
+            running_count: 0,
+            total_count: 0,
+        }];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::ComposeDown { .. }));
+    }
+
+    // Compose: r returns ComposeRestart
+    #[test]
+    fn compose_r_returns_restart() {
+        let mut app = App::new(false);
+        app.operator_resource = "compose".into();
+        app.compose_projects = vec![crate::app::ComposeProject {
+            name: "myapp".into(),
+            working_dir: "/home/myapp".into(),
+            services: vec![],
+            running_count: 0,
+            total_count: 0,
+        }];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('r')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::ComposeRestart { .. }));
+    }
+
+    // Compose: actions with empty working_dir return Consumed
+    #[test]
+    fn compose_actions_empty_workdir() {
+        let mut app = App::new(false);
+        app.operator_resource = "compose".into();
+        app.compose_projects = vec![crate::app::ComposeProject {
+            name: "myapp".into(),
+            working_dir: "".into(), // empty
+            services: vec![],
+            running_count: 0,
+            total_count: 0,
+        }];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('u')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    // ── Log view: horizontal scroll ─────────────────────────────────
+
+    #[test]
+    fn log_h_scroll_right() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        app.log_view_follow = false;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Right), &mut app, &config);
+        assert_eq!(app.log_view_h_scroll, 4);
+    }
+
+    #[test]
+    fn log_h_scroll_left_no_underflow() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        app.log_view_follow = false;
+        app.log_view_h_scroll = 0;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Left), &mut app, &config);
+        assert_eq!(app.log_view_h_scroll, 0);
+    }
+
+    #[test]
+    fn log_home_resets_h_scroll() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        app.log_view_h_scroll = 20;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Home), &mut app, &config);
+        assert_eq!(app.log_view_h_scroll, 0);
+    }
+
+    // Log view: wrap toggle
+    #[test]
+    fn log_wrap_toggle() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        assert!(!app.log_view_wrap);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('w')), &mut app, &config);
+        assert!(app.log_view_wrap);
+        assert_eq!(app.log_view_h_scroll, 0); // reset on wrap toggle
+    }
+
+    #[test]
+    fn log_h_scroll_disabled_when_wrapped() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        app.log_view_wrap = true;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Right), &mut app, &config);
+        assert_eq!(app.log_view_h_scroll, 0); // no scroll when wrapped
+    }
 }
