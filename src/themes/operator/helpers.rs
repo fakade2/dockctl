@@ -252,3 +252,305 @@ pub(super) fn current_columns<'a>(app: &App, config: &'a DockctlConfig) -> &'a [
 pub(super) fn operator_max_cols(app: &App, config: &DockctlConfig) -> usize {
     current_columns(app, config).len()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::runtime::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn state_color_running() {
+        assert_eq!(state_color("running"), Color::Green);
+    }
+    #[test]
+    fn state_color_paused() {
+        assert_eq!(state_color("paused"), Color::Yellow);
+    }
+    #[test]
+    fn state_color_exited() {
+        assert_eq!(state_color("exited"), Color::Red);
+    }
+    #[test]
+    fn state_color_created() {
+        assert_eq!(state_color("created"), Color::Gray);
+    }
+    #[test]
+    fn state_color_restarting() {
+        assert_eq!(state_color("restarting"), Color::Blue);
+    }
+    #[test]
+    fn state_color_unknown() {
+        assert_eq!(state_color("dead"), Color::Red);
+    }
+
+    #[test]
+    fn container_dot_running() {
+        let (dot, color) = container_status_dot("running");
+        assert_eq!(color, Color::Green);
+        assert_eq!(dot, "\u{25cf}");
+    }
+    #[test]
+    fn container_dot_exited() {
+        let (_, color) = container_status_dot("exited");
+        assert_eq!(color, Color::Red);
+    }
+    #[test]
+    fn container_dot_paused() {
+        let (_, color) = container_status_dot("paused");
+        assert_eq!(color, Color::Yellow);
+    }
+    #[test]
+    fn container_dot_created() {
+        let (dot, color) = container_status_dot("created");
+        assert_eq!(color, Color::DarkGray);
+        assert_eq!(dot, "\u{25cb}");
+    }
+
+    #[test]
+    fn image_dot_tagged() {
+        let (_, color) = image_status_dot(&["nginx:latest".into()]);
+        assert_eq!(color, Color::Green);
+    }
+    #[test]
+    fn image_dot_none() {
+        let (_, color) = image_status_dot(&["<none>:<none>".into()]);
+        assert_eq!(color, Color::Red);
+    }
+    #[test]
+    fn image_dot_empty() {
+        let (_, color) = image_status_dot(&[]);
+        assert_eq!(color, Color::Red);
+    }
+
+    #[test]
+    fn network_dot_with_containers() {
+        let (_, color) = network_status_dot(3);
+        assert_eq!(color, Color::Green);
+    }
+    #[test]
+    fn network_dot_empty() {
+        let (_, color) = network_status_dot(0);
+        assert_eq!(color, Color::DarkGray);
+    }
+
+    #[test]
+    fn capitalize_empty() {
+        assert_eq!(capitalize(""), "");
+    }
+    #[test]
+    fn capitalize_word() {
+        assert_eq!(capitalize("hello"), "Hello");
+    }
+    #[test]
+    fn capitalize_already() {
+        assert_eq!(capitalize("Hello"), "Hello");
+    }
+    #[test]
+    fn capitalize_single_char() {
+        assert_eq!(capitalize("x"), "X");
+    }
+
+    #[test]
+    fn row_counts_empty() {
+        let app = App::new(false);
+        let (total, filtered) = row_counts(&app);
+        assert_eq!(total, 0);
+        assert_eq!(filtered, 0);
+    }
+    #[test]
+    fn row_counts_containers() {
+        let mut app = App::new(false);
+        app.containers = vec![
+            ContainerSummary {
+                id: "a".into(),
+                name: "nginx".into(),
+                names: vec!["nginx".into()],
+                image: "nginx:latest".into(),
+                image_id: "sha256:a".into(),
+                command: "/bin/sh".into(),
+                state: "running".into(),
+                status: "Up".into(),
+                created: 0,
+                ports: vec![],
+                labels: HashMap::new(),
+            },
+            ContainerSummary {
+                id: "b".into(),
+                name: "redis".into(),
+                names: vec!["redis".into()],
+                image: "redis:latest".into(),
+                image_id: "sha256:b".into(),
+                command: "/bin/sh".into(),
+                state: "exited".into(),
+                status: "Exited".into(),
+                created: 0,
+                ports: vec![],
+                labels: HashMap::new(),
+            },
+        ];
+        let (total, filtered) = row_counts(&app);
+        assert_eq!(total, 2);
+        assert_eq!(filtered, 2);
+    }
+    #[test]
+    fn row_counts_with_filter() {
+        let mut app = App::new(false);
+        app.containers = vec![
+            ContainerSummary {
+                id: "a".into(),
+                name: "nginx".into(),
+                names: vec!["nginx".into()],
+                image: "nginx:latest".into(),
+                image_id: "sha256:a".into(),
+                command: "/bin/sh".into(),
+                state: "running".into(),
+                status: "Up".into(),
+                created: 0,
+                ports: vec![],
+                labels: HashMap::new(),
+            },
+            ContainerSummary {
+                id: "b".into(),
+                name: "redis".into(),
+                names: vec!["redis".into()],
+                image: "redis:latest".into(),
+                image_id: "sha256:b".into(),
+                command: "/bin/sh".into(),
+                state: "exited".into(),
+                status: "Exited".into(),
+                created: 0,
+                ports: vec![],
+                labels: HashMap::new(),
+            },
+        ];
+        app.operator_filter = "nginx".into();
+        let (total, filtered) = row_counts(&app);
+        assert_eq!(total, 2);
+        assert_eq!(filtered, 1);
+    }
+    #[test]
+    fn row_counts_images() {
+        let mut app = App::new(false);
+        app.operator_resource = "images".into();
+        app.images = vec![ImageSummary {
+            id: "sha256:abc".into(),
+            repo_tags: vec!["nginx:latest".into()],
+            repo_digests: vec![],
+            size: 1000,
+            created: 0,
+            labels: HashMap::new(),
+        }];
+        let (total, filtered) = row_counts(&app);
+        assert_eq!(total, 1);
+        assert_eq!(filtered, 1);
+    }
+    #[test]
+    fn row_counts_volumes() {
+        let mut app = App::new(false);
+        app.operator_resource = "volumes".into();
+        app.volumes = vec![VolumeSummary {
+            name: "data".into(),
+            driver: "local".into(),
+            mountpoint: "/var".into(),
+            labels: HashMap::new(),
+            scope: "local".into(),
+            created_at: "2026-01-01".into(),
+        }];
+        let (total, filtered) = row_counts(&app);
+        assert_eq!(total, 1);
+        assert_eq!(filtered, 1);
+    }
+    #[test]
+    fn row_counts_networks() {
+        let mut app = App::new(false);
+        app.operator_resource = "networks".into();
+        app.networks = vec![NetworkSummary {
+            id: "net1".into(),
+            name: "bridge".into(),
+            driver: "bridge".into(),
+            scope: "local".into(),
+            internal: false,
+            ipv6_enabled: false,
+            labels: HashMap::new(),
+            containers: HashMap::new(),
+        }];
+        let (total, filtered) = row_counts(&app);
+        assert_eq!(total, 1);
+        assert_eq!(filtered, 1);
+    }
+    #[test]
+    fn row_counts_unknown_resource() {
+        let mut app = App::new(false);
+        app.operator_resource = "unknown".into();
+        let (total, filtered) = row_counts(&app);
+        assert_eq!(total, 0);
+        assert_eq!(filtered, 0);
+    }
+
+    #[test]
+    fn help_lines_not_empty() {
+        let lines = help_lines();
+        assert!(!lines.is_empty());
+        assert!(lines.iter().any(|l| l.contains("Navigation")));
+    }
+    #[test]
+    fn help_lines_contains_quit() {
+        let lines = help_lines();
+        assert!(lines.iter().any(|l| l.contains(":q")));
+    }
+
+    #[test]
+    fn k9s_title_no_filter() {
+        let title = k9s_table_title("containers", 10, 10, "", "");
+        assert!(title.contains("Containers"));
+        assert!(title.contains("10"));
+    }
+    #[test]
+    fn k9s_title_with_scroll_hint() {
+        let title = k9s_table_title("images", 5, 3, "", " [1-3/5]");
+        assert!(title.contains("Images"));
+        assert!(title.contains("[1-3/5]"));
+    }
+
+    #[test]
+    fn create_sorted_header_no_sort() {
+        let cols = vec!["Name".into(), "Status".into()];
+        let _row = create_sorted_header(&cols, None, true);
+    }
+    #[test]
+    fn create_sorted_header_ascending() {
+        let cols = vec!["Name".into(), "Status".into()];
+        let _row = create_sorted_header(&cols, Some("Name"), true);
+    }
+    #[test]
+    fn create_sorted_header_descending() {
+        let cols = vec!["Name".into(), "Status".into()];
+        let _row = create_sorted_header(&cols, Some("Name"), false);
+    }
+
+    #[test]
+    fn current_columns_default() {
+        let app = App::new(false);
+        let config = DockctlConfig::default();
+        let cols = current_columns(&app, &config);
+        assert!(!cols.is_empty());
+        assert!(cols.iter().any(|c| c == "Name"));
+    }
+    #[test]
+    fn current_columns_wide_mode() {
+        let mut app = App::new(false);
+        app.wide_mode = true;
+        let config = DockctlConfig::default();
+        let cols = current_columns(&app, &config);
+        assert!(cols.iter().any(|c| c == "Image"));
+    }
+    #[test]
+    fn operator_max_cols_matches() {
+        let app = App::new(false);
+        let config = DockctlConfig::default();
+        let max = operator_max_cols(&app, &config);
+        assert_eq!(max, current_columns(&app, &config).len());
+    }
+}

@@ -541,3 +541,507 @@ fn dashboard_help_lines() -> Vec<String> {
         "E            Exec into container (tmux)".into(),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::config::DockctlConfig;
+    use crate::runtime::ContainerSummary;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::collections::HashMap;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn key_ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    fn make_container(id: &str) -> ContainerSummary {
+        ContainerSummary {
+            id: id.into(),
+            name: id.into(),
+            names: vec![id.into()],
+            image: "img".into(),
+            image_id: format!("sha256:{id}"),
+            command: "/bin/sh".into(),
+            state: "running".into(),
+            status: "Up 1 hour".into(),
+            created: 1700000000,
+            ports: vec![],
+            labels: HashMap::new(),
+        }
+    }
+
+    // ── Panel switching ──────────────────────────────────────────────
+
+    #[test]
+    fn number_keys_switch_panels() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('4')), &mut app, &config);
+        assert_eq!(app.active_panel, PanelId::Containers);
+    }
+
+    #[test]
+    fn number_1_focuses_alerts() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('1')), &mut app, &config);
+        assert_eq!(app.active_panel, PanelId::Alerts);
+    }
+
+    #[test]
+    fn number_5_focuses_images() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('5')), &mut app, &config);
+        assert_eq!(app.active_panel, PanelId::Images);
+    }
+
+    #[test]
+    fn number_7_focuses_networks() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('7')), &mut app, &config);
+        assert_eq!(app.active_panel, PanelId::Networks);
+    }
+
+    #[test]
+    fn tab_cycles_panels() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        let initial = app.active_panel;
+        dashboard_handle_key(key(KeyCode::Tab), &mut app, &config);
+        assert_ne!(app.active_panel, initial);
+    }
+
+    #[test]
+    fn backtab_cycles_panels_backward() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        // Start at Containers (4), go backward to Status (3)
+        dashboard_handle_key(key(KeyCode::BackTab), &mut app, &config);
+        assert_eq!(app.active_panel, PanelId::Status);
+    }
+
+    // ── j/k navigation ──────────────────────────────────────────────
+
+    #[test]
+    fn j_navigates_down() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+        app.containers = vec![make_container("a"), make_container("b")];
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        assert_eq!(app.selected_index(), 1);
+    }
+
+    #[test]
+    fn k_navigates_up() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+        app.containers = vec![make_container("a"), make_container("b")];
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        dashboard_handle_key(key(KeyCode::Char('k')), &mut app, &config);
+        assert_eq!(app.selected_index(), 0);
+    }
+
+    #[test]
+    fn j_on_empty_list_does_not_crash() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        // Should not panic
+        assert_eq!(app.selected_index(), 0);
+    }
+
+    // ── Popup mode ───────────────────────────────────────────────────
+
+    #[test]
+    fn popup_q_closes() {
+        let mut app = App::new(false);
+        app.open_popup("Test".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('q')), &mut app, &config);
+        assert!(!app.show_popup);
+    }
+
+    #[test]
+    fn popup_esc_closes() {
+        let mut app = App::new(false);
+        app.open_popup("Test".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert!(!app.show_popup);
+    }
+
+    #[test]
+    fn popup_j_scrolls_down() {
+        let mut app = App::new(false);
+        app.open_popup("Test".into(), vec!["a".into(), "b".into(), "c".into()]);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        assert_eq!(app.popup_scroll, 1);
+    }
+
+    #[test]
+    fn popup_scroll_capped() {
+        let mut app = App::new(false);
+        app.open_popup("Test".into(), vec!["a".into(), "b".into()]);
+        let config = DockctlConfig::default();
+        for _ in 0..100 {
+            dashboard_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        }
+        assert!(app.popup_scroll <= 1);
+    }
+
+    #[test]
+    fn popup_k_scrolls_up() {
+        let mut app = App::new(false);
+        app.open_popup("Test".into(), vec!["a".into(), "b".into()]);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        dashboard_handle_key(key(KeyCode::Char('k')), &mut app, &config);
+        assert_eq!(app.popup_scroll, 0);
+    }
+
+    #[test]
+    fn popup_unhandled_key_consumed() {
+        let mut app = App::new(false);
+        app.open_popup("Test".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('z')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert!(app.show_popup); // still open
+    }
+
+    // ── Log view ─────────────────────────────────────────────────────
+
+    #[test]
+    fn log_view_esc_closes() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert!(!app.log_view_active);
+    }
+
+    #[test]
+    fn log_view_q_closes() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('q')), &mut app, &config);
+        assert!(!app.log_view_active);
+    }
+
+    #[test]
+    fn log_view_f_toggles_follow() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        assert!(app.log_view_follow);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('f')), &mut app, &config);
+        assert!(!app.log_view_follow);
+        dashboard_handle_key(key(KeyCode::Char('f')), &mut app, &config);
+        assert!(app.log_view_follow);
+    }
+
+    #[test]
+    fn log_view_number_returns_refresh() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('1')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::RefreshLogs { tail: 50, .. }));
+    }
+
+    #[test]
+    fn log_view_g_jumps_to_top() {
+        let mut app = App::new(false);
+        app.open_log_view(
+            "id".into(),
+            "name".into(),
+            vec!["a".into(), "b".into(), "c".into()],
+        );
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('g')), &mut app, &config);
+        assert_eq!(app.log_view_scroll, 0);
+        assert!(!app.log_view_follow);
+    }
+
+    #[test]
+    fn log_view_scroll_capped() {
+        let mut app = App::new(false);
+        app.open_log_view(
+            "id".into(),
+            "name".into(),
+            vec!["a".into(), "b".into(), "c".into()],
+        );
+        app.log_view_follow = false;
+        app.log_view_scroll = 0;
+        let config = DockctlConfig::default();
+        for _ in 0..100 {
+            dashboard_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        }
+        assert!(app.log_view_scroll <= 2);
+    }
+
+    // ── Detail view ──────────────────────────────────────────────────
+
+    #[test]
+    fn detail_view_esc_closes() {
+        let mut app = App::new(false);
+        app.open_detail_view("Test".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert!(!app.detail_view_active);
+    }
+
+    #[test]
+    fn detail_view_q_closes() {
+        let mut app = App::new(false);
+        app.open_detail_view("Test".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('q')), &mut app, &config);
+        assert!(!app.detail_view_active);
+    }
+
+    #[test]
+    fn detail_view_j_scrolls_down() {
+        let mut app = App::new(false);
+        app.open_detail_view("Test".into(), vec!["a".into(), "b".into(), "c".into()]);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        assert_eq!(app.detail_view_scroll, 1);
+    }
+
+    #[test]
+    fn detail_view_g_jumps_to_top() {
+        let mut app = App::new(false);
+        app.open_detail_view("Test".into(), vec!["a".into(), "b".into(), "c".into()]);
+        app.detail_view_scroll = 2;
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('g')), &mut app, &config);
+        assert_eq!(app.detail_view_scroll, 0);
+    }
+
+    #[test]
+    fn detail_view_shift_g_jumps_to_bottom() {
+        let mut app = App::new(false);
+        app.open_detail_view("Test".into(), vec!["a".into(), "b".into(), "c".into()]);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('G')), &mut app, &config);
+        assert_eq!(app.detail_view_scroll, 2);
+    }
+
+    // ── Search mode ──────────────────────────────────────────────────
+
+    #[test]
+    fn slash_enters_search_mode() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('/')), &mut app, &config);
+        assert_eq!(app.input_mode, InputMode::Search);
+    }
+
+    #[test]
+    fn search_mode_esc_returns_to_normal() {
+        let mut app = App::new(false);
+        app.input_mode = InputMode::Search;
+        app.search_query = "test".into();
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert!(app.search_query.is_empty());
+    }
+
+    #[test]
+    fn search_mode_typing() {
+        let mut app = App::new(false);
+        app.input_mode = InputMode::Search;
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('n')), &mut app, &config);
+        dashboard_handle_key(key(KeyCode::Char('g')), &mut app, &config);
+        assert_eq!(app.search_query, "ng");
+    }
+
+    #[test]
+    fn search_mode_enter_applies() {
+        let mut app = App::new(false);
+        app.input_mode = InputMode::Search;
+        app.search_query = "test".into();
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Enter), &mut app, &config);
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert_eq!(app.search_query, "test"); // preserved
+    }
+
+    #[test]
+    fn search_mode_backspace() {
+        let mut app = App::new(false);
+        app.input_mode = InputMode::Search;
+        app.search_query = "abc".into();
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Backspace), &mut app, &config);
+        assert_eq!(app.search_query, "ab");
+    }
+
+    // ── ? opens help popup ───────────────────────────────────────────
+
+    #[test]
+    fn help_opens_popup() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('?')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::OpenPopup { .. }));
+    }
+
+    // ── Container actions ────────────────────────────────────────────
+
+    #[test]
+    fn s_on_containers_returns_stop() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('s')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::StopContainer { id } if id == "c1"));
+    }
+
+    #[test]
+    fn s_on_containers_consumed_when_empty() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('s')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    #[test]
+    fn r_on_containers_returns_restart() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('r')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::RestartContainer { id } if id == "c1"));
+    }
+
+    #[test]
+    fn x_on_containers_returns_remove() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::RemoveContainer { id } if id == "c1"));
+    }
+
+    #[test]
+    fn l_on_containers_returns_fetch_logs() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('l')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::FetchLogs { .. }));
+    }
+
+    #[test]
+    fn shift_e_on_containers_returns_exec() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('E')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::ExecContainer { id } if id == "c1"));
+    }
+
+    #[test]
+    fn s_on_non_container_panel_not_handled() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Images;
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('s')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::NotHandled));
+    }
+
+    // ── Explain ──────────────────────────────────────────────────────
+
+    #[test]
+    fn e_returns_explain() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('e')), &mut app, &config);
+        assert!(matches!(
+            result,
+            ThemeAction::ExplainItem { use_inline: false }
+        ));
+    }
+
+    #[test]
+    fn enter_returns_explain() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Enter), &mut app, &config);
+        assert!(matches!(
+            result,
+            ThemeAction::ExplainItem { use_inline: false }
+        ));
+    }
+
+    // ── Quit ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn q_quits() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('q')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Quit));
+    }
+
+    #[test]
+    fn ctrl_c_quits() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key_ctrl(KeyCode::Char('c')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Quit));
+    }
+
+    // ── Esc in normal mode ───────────────────────────────────────────
+
+    #[test]
+    fn esc_clears_search_query() {
+        let mut app = App::new(false);
+        app.search_query = "test".into();
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert!(app.search_query.is_empty());
+    }
+
+    // ── Column scrolling ─────────────────────────────────────────────
+
+    #[test]
+    fn right_arrow_scrolls_columns_on_right_panel() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Images;
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Right), &mut app, &config);
+        assert!(app.panel_column_offset(PanelId::Images) > 0);
+    }
+
+    #[test]
+    fn right_arrow_not_handled_on_left_panel() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Alerts;
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Right), &mut app, &config);
+        assert!(matches!(result, ThemeAction::NotHandled));
+    }
+}

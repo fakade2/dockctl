@@ -216,3 +216,211 @@ pub fn truncate_str(s: &str, max_len: usize) -> String {
     let keep = (max_len - 3) / 2;
     format!("{}...{}", &s[..keep], &s[s.len() - keep..])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::PortMapping;
+
+    // format_bytes
+    #[test]
+    fn format_bytes_zero() {
+        assert_eq!(format_bytes(0), "0 B");
+    }
+    #[test]
+    fn format_bytes_bytes() {
+        assert_eq!(format_bytes(500), "500 B");
+    }
+    #[test]
+    fn format_bytes_kb() {
+        assert_eq!(format_bytes(2048), "2 KB");
+    }
+    #[test]
+    fn format_bytes_mb() {
+        assert_eq!(format_bytes(5 * 1024 * 1024), "5.0 MB");
+    }
+    #[test]
+    fn format_bytes_gb() {
+        assert_eq!(format_bytes(2 * 1024 * 1024 * 1024), "2.00 GB");
+    }
+
+    // short_id
+    #[test]
+    fn short_id_strips_sha256() {
+        assert_eq!(short_id("sha256:abcdef123456789"), "abcdef123456");
+    }
+    #[test]
+    fn short_id_no_prefix() {
+        assert_eq!(short_id("abcdef123456789"), "abcdef123456");
+    }
+    #[test]
+    fn short_id_short_input() {
+        assert_eq!(short_id("abc"), "abc");
+    }
+    #[test]
+    fn short_id_empty() {
+        assert_eq!(short_id(""), "");
+    }
+
+    // container_display_name
+    #[test]
+    fn display_name_strips_slash() {
+        assert_eq!(container_display_name(&["/nginx".into()]), "nginx");
+    }
+    #[test]
+    fn display_name_no_slash() {
+        assert_eq!(container_display_name(&["nginx".into()]), "nginx");
+    }
+    #[test]
+    fn display_name_empty() {
+        assert_eq!(container_display_name(&[]), "<unnamed>");
+    }
+    #[test]
+    fn display_name_multiple() {
+        assert_eq!(container_display_name(&["/a".into(), "/b".into()]), "a");
+    }
+
+    // format_port
+    #[test]
+    fn format_port_mapped() {
+        let pm = PortMapping {
+            ip: Some("0.0.0.0".into()),
+            private_port: 80,
+            public_port: Some(8080),
+            port_type: "tcp".into(),
+        };
+        assert_eq!(format_port(&pm), "8080:80");
+    }
+    #[test]
+    fn format_port_no_public() {
+        let pm = PortMapping {
+            ip: None,
+            private_port: 80,
+            public_port: None,
+            port_type: "tcp".into(),
+        };
+        assert_eq!(format_port(&pm), "80");
+    }
+
+    // format_ports
+    #[test]
+    fn format_ports_empty() {
+        assert_eq!(format_ports(&[]), "");
+    }
+    #[test]
+    fn format_ports_deduplicates() {
+        let ports = vec![
+            PortMapping {
+                ip: Some("0.0.0.0".into()),
+                private_port: 80,
+                public_port: Some(8080),
+                port_type: "tcp".into(),
+            },
+            PortMapping {
+                ip: Some("::".into()),
+                private_port: 80,
+                public_port: Some(8080),
+                port_type: "tcp".into(),
+            },
+        ];
+        assert_eq!(format_ports(&ports), "8080:80"); // deduplicated
+    }
+
+    // truncate_str
+    #[test]
+    fn truncate_short() {
+        assert_eq!(truncate_str("hello", 10), "hello");
+    }
+    #[test]
+    fn truncate_long() {
+        let result = truncate_str("a_very_long_path_name", 10);
+        assert!(result.contains("..."));
+        assert!(result.len() <= 10);
+    }
+
+    // percentage_color
+    #[test]
+    fn pct_color_green() {
+        assert_eq!(percentage_color(30.0), Color::Green);
+    }
+    #[test]
+    fn pct_color_yellow() {
+        assert_eq!(percentage_color(60.0), Color::Yellow);
+    }
+    #[test]
+    fn pct_color_red() {
+        assert_eq!(percentage_color(90.0), Color::Red);
+    }
+
+    // visible_column_count
+    #[test]
+    fn visible_cols_narrow() {
+        assert_eq!(visible_column_count(24, 10), 1);
+    }
+    #[test]
+    fn visible_cols_wide() {
+        assert_eq!(visible_column_count(100, 10), 8);
+    }
+    #[test]
+    fn visible_cols_capped() {
+        assert_eq!(visible_column_count(200, 3), 3);
+    }
+
+    // format_scroll_hint
+    #[test]
+    fn scroll_hint_no_scroll() {
+        assert_eq!(format_scroll_hint(0, 5, 5), "");
+    }
+    #[test]
+    fn scroll_hint_scrollable() {
+        assert_eq!(format_scroll_hint(0, 3, 8), " [1-3/8]");
+    }
+    #[test]
+    fn scroll_hint_offset() {
+        assert_eq!(format_scroll_hint(2, 3, 8), " [3-5/8]");
+    }
+
+    // selected_row_style
+    #[test]
+    fn row_style_selected() {
+        let s = selected_row_style(true, true);
+        assert_ne!(s, Style::default());
+    }
+    #[test]
+    fn row_style_not_selected() {
+        assert_eq!(selected_row_style(true, false), Style::default());
+    }
+    #[test]
+    fn row_style_not_focused() {
+        assert_eq!(selected_row_style(false, true), Style::default());
+    }
+
+    // create_table_header
+    #[test]
+    fn table_header_columns() {
+        let cols = vec!["Name".into(), "Status".into()];
+        let _row = create_table_header(&cols);
+    }
+
+    // collapsed_panel_line
+    #[test]
+    fn collapsed_line_renders() {
+        let line = collapsed_panel_line("Test", 1, false);
+        assert!(!line.spans.is_empty());
+    }
+    #[test]
+    fn collapsed_line_focused() {
+        let line = collapsed_panel_line("Test", 1, true);
+        assert!(!line.spans.is_empty());
+    }
+
+    // panel_block
+    #[test]
+    fn panel_block_creates() {
+        let _block = panel_block("Test", 1, false);
+    }
+    #[test]
+    fn panel_block_focused() {
+        let _block = panel_block("Test", 1, true);
+    }
+}

@@ -399,3 +399,636 @@ fn handle_filter_mode(key: KeyEvent, app: &mut App) -> ThemeAction {
         _ => ThemeAction::Consumed,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::config::DockctlConfig;
+    use crate::runtime::ContainerSummary;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::collections::HashMap;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn key_shift(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
+    fn key_ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    fn make_container(id: &str) -> ContainerSummary {
+        ContainerSummary {
+            id: id.into(),
+            name: id.into(),
+            names: vec![id.into()],
+            image: "img".into(),
+            image_id: format!("sha256:{id}"),
+            command: "/bin/sh".into(),
+            state: "running".into(),
+            status: "Up 1 hour".into(),
+            created: 1700000000,
+            ports: vec![],
+            labels: HashMap::new(),
+        }
+    }
+
+    // ── Popup mode ───────────────────────────────────────────────────
+
+    #[test]
+    fn popup_esc_closes() {
+        let mut app = App::new(false);
+        app.open_popup("Test".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert!(!app.show_popup);
+    }
+
+    #[test]
+    fn popup_q_closes() {
+        let mut app = App::new(false);
+        app.open_popup("Test".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('q')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert!(!app.show_popup);
+    }
+
+    #[test]
+    fn popup_scroll_capped() {
+        let mut app = App::new(false);
+        app.open_popup("Test".into(), vec!["a".into(), "b".into()]);
+        let config = DockctlConfig::default();
+        for _ in 0..100 {
+            operator_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        }
+        assert!(app.popup_scroll <= 1); // max = content.len() - 1
+    }
+
+    #[test]
+    fn popup_scroll_up_does_not_underflow() {
+        let mut app = App::new(false);
+        app.open_popup("Test".into(), vec!["a".into(), "b".into()]);
+        let config = DockctlConfig::default();
+        for _ in 0..100 {
+            operator_handle_key(key(KeyCode::Char('k')), &mut app, &config);
+        }
+        assert_eq!(app.popup_scroll, 0);
+    }
+
+    #[test]
+    fn popup_unhandled_key_consumed() {
+        let mut app = App::new(false);
+        app.open_popup("Test".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('z')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert!(app.show_popup); // still open
+    }
+
+    // ── Log view mode ────────────────────────────────────────────────
+
+    #[test]
+    fn log_follow_toggle() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        assert!(app.log_view_follow);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('f')), &mut app, &config);
+        assert!(!app.log_view_follow);
+        operator_handle_key(key(KeyCode::Char('f')), &mut app, &config);
+        assert!(app.log_view_follow);
+    }
+
+    #[test]
+    fn log_scroll_capped() {
+        let mut app = App::new(false);
+        app.open_log_view(
+            "id".into(),
+            "name".into(),
+            vec!["a".into(), "b".into(), "c".into()],
+        );
+        app.log_view_follow = false;
+        app.log_view_scroll = 0;
+        let config = DockctlConfig::default();
+        for _ in 0..100 {
+            operator_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        }
+        assert!(app.log_view_scroll <= 2);
+    }
+
+    #[test]
+    fn log_esc_closes() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert!(!app.log_view_active);
+    }
+
+    #[test]
+    fn log_q_closes() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('q')), &mut app, &config);
+        assert!(!app.log_view_active);
+    }
+
+    #[test]
+    fn log_number_key_returns_refresh() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('1')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::RefreshLogs { tail: 50, .. }));
+    }
+
+    #[test]
+    fn log_number_key_2_returns_100() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('2')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::RefreshLogs { tail: 100, .. }));
+    }
+
+    #[test]
+    fn log_g_jumps_to_top() {
+        let mut app = App::new(false);
+        app.open_log_view(
+            "id".into(),
+            "name".into(),
+            vec!["a".into(), "b".into(), "c".into()],
+        );
+        // scroll is at bottom (2) from open_log_view
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('g')), &mut app, &config);
+        assert_eq!(app.log_view_scroll, 0);
+        assert!(!app.log_view_follow);
+    }
+
+    #[test]
+    fn log_shift_g_jumps_to_bottom() {
+        let mut app = App::new(false);
+        app.open_log_view(
+            "id".into(),
+            "name".into(),
+            vec!["a".into(), "b".into(), "c".into()],
+        );
+        app.log_view_follow = false;
+        app.log_view_scroll = 0;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('G')), &mut app, &config);
+        assert_eq!(app.log_view_scroll, 2);
+        assert!(app.log_view_follow);
+    }
+
+    #[test]
+    fn log_page_down_scrolls_by_20() {
+        let mut app = App::new(false);
+        let lines: Vec<String> = (0..50).map(|i| format!("line {i}")).collect();
+        app.open_log_view("id".into(), "name".into(), lines);
+        app.log_view_follow = false;
+        app.log_view_scroll = 0;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::PageDown), &mut app, &config);
+        assert_eq!(app.log_view_scroll, 20);
+    }
+
+    #[test]
+    fn log_colon_enters_command_mode() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char(':')), &mut app, &config);
+        assert!(app.operator_command_mode);
+    }
+
+    #[test]
+    fn log_slash_enters_filter_mode() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('/')), &mut app, &config);
+        assert!(app.operator_filter_active);
+    }
+
+    // ── Detail view mode ─────────────────────────────────────────────
+
+    #[test]
+    fn detail_esc_closes() {
+        let mut app = App::new(false);
+        app.open_detail_view("Test".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert!(!app.detail_view_active);
+    }
+
+    #[test]
+    fn detail_q_closes() {
+        let mut app = App::new(false);
+        app.open_detail_view("Test".into(), vec!["line".into()]);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('q')), &mut app, &config);
+        assert!(!app.detail_view_active);
+    }
+
+    #[test]
+    fn detail_j_scrolls_down() {
+        let mut app = App::new(false);
+        app.open_detail_view("Test".into(), vec!["a".into(), "b".into(), "c".into()]);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        assert_eq!(app.detail_view_scroll, 1);
+    }
+
+    #[test]
+    fn detail_g_jumps_to_top() {
+        let mut app = App::new(false);
+        app.open_detail_view("Test".into(), vec!["a".into(), "b".into(), "c".into()]);
+        app.detail_view_scroll = 2;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('g')), &mut app, &config);
+        assert_eq!(app.detail_view_scroll, 0);
+    }
+
+    #[test]
+    fn detail_shift_g_jumps_to_bottom() {
+        let mut app = App::new(false);
+        app.open_detail_view("Test".into(), vec!["a".into(), "b".into(), "c".into()]);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('G')), &mut app, &config);
+        assert_eq!(app.detail_view_scroll, 2); // len=3, saturating_sub(1)=2
+    }
+
+    // ── Command mode ─────────────────────────────────────────────────
+
+    #[test]
+    fn colon_enters_command_mode() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char(':')), &mut app, &config);
+        assert!(app.operator_command_mode);
+    }
+
+    #[test]
+    fn esc_enters_command_mode_when_normal() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert!(app.operator_command_mode);
+    }
+
+    #[test]
+    fn command_mode_esc_exits() {
+        let mut app = App::new(false);
+        app.operator_command_mode = true;
+        app.operator_command_input = "con".into();
+        let result = handle_command_mode(key(KeyCode::Esc), &mut app);
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert!(!app.operator_command_mode);
+        assert!(app.operator_command_input.is_empty());
+    }
+
+    #[test]
+    fn command_mode_typing() {
+        let mut app = App::new(false);
+        app.operator_command_mode = true;
+        handle_command_mode(key(KeyCode::Char('c')), &mut app);
+        handle_command_mode(key(KeyCode::Char('o')), &mut app);
+        handle_command_mode(key(KeyCode::Char('n')), &mut app);
+        assert_eq!(app.operator_command_input, "con");
+    }
+
+    #[test]
+    fn command_mode_backspace() {
+        let mut app = App::new(false);
+        app.operator_command_mode = true;
+        app.operator_command_input = "con".into();
+        handle_command_mode(key(KeyCode::Backspace), &mut app);
+        assert_eq!(app.operator_command_input, "co");
+    }
+
+    // ── Filter mode ──────────────────────────────────────────────────
+
+    #[test]
+    fn slash_enters_filter_mode() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('/')), &mut app, &config);
+        assert!(app.operator_filter_active);
+        assert!(app.operator_filter.is_empty());
+    }
+
+    #[test]
+    fn filter_mode_typing() {
+        let mut app = App::new(false);
+        app.operator_filter_active = true;
+        handle_filter_mode(key(KeyCode::Char('n')), &mut app);
+        handle_filter_mode(key(KeyCode::Char('g')), &mut app);
+        assert_eq!(app.operator_filter, "ng");
+    }
+
+    #[test]
+    fn filter_mode_esc_clears() {
+        let mut app = App::new(false);
+        app.operator_filter_active = true;
+        app.operator_filter = "test".into();
+        handle_filter_mode(key(KeyCode::Esc), &mut app);
+        assert!(!app.operator_filter_active);
+        assert!(app.operator_filter.is_empty());
+    }
+
+    #[test]
+    fn filter_mode_enter_keeps_filter() {
+        let mut app = App::new(false);
+        app.operator_filter_active = true;
+        app.operator_filter = "test".into();
+        handle_filter_mode(key(KeyCode::Enter), &mut app);
+        assert!(!app.operator_filter_active);
+        assert_eq!(app.operator_filter, "test"); // preserved
+    }
+
+    #[test]
+    fn filter_mode_backspace() {
+        let mut app = App::new(false);
+        app.operator_filter_active = true;
+        app.operator_filter = "abc".into();
+        handle_filter_mode(key(KeyCode::Backspace), &mut app);
+        assert_eq!(app.operator_filter, "ab");
+    }
+
+    // ── Container actions ────────────────────────────────────────────
+
+    #[test]
+    fn s_returns_stop_on_containers() {
+        let mut app = App::new(false);
+        app.operator_resource = "containers".into();
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('s')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::StopContainer { id } if id == "c1"));
+    }
+
+    #[test]
+    fn s_consumed_when_no_containers() {
+        let mut app = App::new(false);
+        app.operator_resource = "containers".into();
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('s')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    #[test]
+    fn r_returns_restart_on_containers() {
+        let mut app = App::new(false);
+        app.operator_resource = "containers".into();
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('r')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::RestartContainer { id } if id == "c1"));
+    }
+
+    #[test]
+    fn x_returns_remove_on_containers() {
+        let mut app = App::new(false);
+        app.operator_resource = "containers".into();
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::RemoveContainer { id } if id == "c1"));
+    }
+
+    #[test]
+    fn l_returns_fetch_logs_on_containers() {
+        let mut app = App::new(false);
+        app.operator_resource = "containers".into();
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('l')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::FetchLogs { .. }));
+    }
+
+    #[test]
+    fn l_consumed_when_empty_containers() {
+        let mut app = App::new(false);
+        app.operator_resource = "containers".into();
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('l')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    #[test]
+    fn shift_e_returns_exec_on_containers() {
+        let mut app = App::new(false);
+        app.operator_resource = "containers".into();
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('E')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::ExecContainer { id } if id == "c1"));
+    }
+
+    #[test]
+    fn s_not_handled_on_non_containers() {
+        let mut app = App::new(false);
+        app.operator_resource = "images".into();
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('s')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::NotHandled));
+    }
+
+    // ── Ctrl+C quits ─────────────────────────────────────────────────
+
+    #[test]
+    fn ctrl_c_quits() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key_ctrl(KeyCode::Char('c')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Quit));
+    }
+
+    // ── Sort keys ────────────────────────────────────────────────────
+
+    #[test]
+    fn shift_n_sorts_by_name() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        operator_handle_key(key_shift(KeyCode::Char('N')), &mut app, &config);
+        assert_eq!(app.sort_column, Some("Name".into()));
+    }
+
+    #[test]
+    fn shift_s_sorts_by_state() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        operator_handle_key(key_shift(KeyCode::Char('S')), &mut app, &config);
+        assert_eq!(app.sort_column, Some("State".into()));
+    }
+
+    #[test]
+    fn shift_a_sorts_by_created() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        operator_handle_key(key_shift(KeyCode::Char('A')), &mut app, &config);
+        assert_eq!(app.sort_column, Some("Created".into()));
+    }
+
+    // ── Wide mode ────────────────────────────────────────────────────
+
+    #[test]
+    fn ctrl_w_toggles_wide() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        assert!(!app.wide_mode);
+        operator_handle_key(key_ctrl(KeyCode::Char('w')), &mut app, &config);
+        assert!(app.wide_mode);
+        operator_handle_key(key_ctrl(KeyCode::Char('w')), &mut app, &config);
+        assert!(!app.wide_mode);
+    }
+
+    // ── ? opens help ─────────────────────────────────────────────────
+
+    #[test]
+    fn question_mark_opens_help() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('?')), &mut app, &config);
+        assert!(app.detail_view_active);
+        assert!(app.detail_view_title.contains("Keybindings"));
+    }
+
+    // ── d opens describe ─────────────────────────────────────────────
+
+    #[test]
+    fn d_opens_describe() {
+        let mut app = App::new(false);
+        app.operator_resource = "containers".into();
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('d')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert!(app.detail_view_active);
+    }
+
+    #[test]
+    fn d_with_container_shows_detail() {
+        let mut app = App::new(false);
+        app.operator_resource = "containers".into();
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('d')), &mut app, &config);
+        assert!(app.detail_view_active);
+        assert!(app.detail_view_title.contains("Container"));
+    }
+
+    // ── e / Enter opens explain ──────────────────────────────────────
+
+    #[test]
+    fn e_returns_explain() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('e')), &mut app, &config);
+        assert!(matches!(
+            result,
+            ThemeAction::ExplainItem { use_inline: true }
+        ));
+    }
+
+    #[test]
+    fn enter_returns_explain() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Enter), &mut app, &config);
+        assert!(matches!(
+            result,
+            ThemeAction::ExplainItem { use_inline: true }
+        ));
+    }
+
+    // ── Navigation ───────────────────────────────────────────────────
+
+    #[test]
+    fn j_moves_down() {
+        let mut app = App::new(false);
+        app.containers = vec![make_container("a"), make_container("b")];
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        assert_eq!(app.selected_index(), 1);
+    }
+
+    #[test]
+    fn k_moves_up() {
+        let mut app = App::new(false);
+        app.containers = vec![make_container("a"), make_container("b")];
+        let config = DockctlConfig::default();
+        // Move to index 1 first
+        operator_handle_key(key(KeyCode::Char('j')), &mut app, &config);
+        assert_eq!(app.selected_index(), 1);
+        operator_handle_key(key(KeyCode::Char('k')), &mut app, &config);
+        assert_eq!(app.selected_index(), 0);
+    }
+
+    // ── Esc behavior in normal mode ──────────────────────────────────
+
+    #[test]
+    fn esc_clears_filter_when_set() {
+        let mut app = App::new(false);
+        app.operator_filter = "test".into();
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert!(app.operator_filter.is_empty());
+        assert!(!app.operator_command_mode); // should not enter command mode
+    }
+
+    #[test]
+    fn esc_exits_filter_active() {
+        let mut app = App::new(false);
+        app.operator_filter_active = true;
+        app.operator_filter = "test".into();
+        let config = DockctlConfig::default();
+        // This goes through filter_mode handler directly since filter_active is true
+        operator_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert!(!app.operator_filter_active);
+    }
+
+    // ── Ctrl+A opens alias list ──────────────────────────────────────
+
+    #[test]
+    fn ctrl_a_opens_alias_list() {
+        let mut app = App::new(false);
+        let config = DockctlConfig::default();
+        operator_handle_key(key_ctrl(KeyCode::Char('a')), &mut app, &config);
+        assert!(app.detail_view_active);
+        assert!(app.detail_view_title.contains("Resource Aliases"));
+    }
+
+    // ── Column scrolling on non-container resource ───────────────────
+
+    #[test]
+    fn l_scrolls_columns_on_images() {
+        let mut app = App::new(false);
+        app.operator_resource = "images".into();
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('l')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+        // column offset should have advanced
+        assert!(app.panel_column_offset(app.active_panel) > 0);
+    }
+
+    #[test]
+    fn h_scrolls_columns_left() {
+        let mut app = App::new(false);
+        app.operator_resource = "images".into();
+        let config = DockctlConfig::default();
+        // Scroll right first
+        operator_handle_key(key(KeyCode::Char('l')), &mut app, &config);
+        let offset_after_right = app.panel_column_offset(app.active_panel);
+        operator_handle_key(key(KeyCode::Char('h')), &mut app, &config);
+        assert!(app.panel_column_offset(app.active_panel) < offset_after_right);
+    }
+}

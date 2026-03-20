@@ -222,3 +222,267 @@ pub fn network_detail_lines(net: &NetworkSummary) -> Vec<String> {
 
     lines
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{Alert, AlertLevel, App};
+    use crate::runtime::*;
+    use std::collections::HashMap;
+
+    fn make_app() -> App {
+        let mut app = App::new(false);
+        app.containers = vec![ContainerSummary {
+            id: "abc123".into(),
+            name: "nginx".into(),
+            names: vec!["nginx".into()],
+            image: "nginx:latest".into(),
+            image_id: "sha256:abc".into(),
+            command: "nginx -g daemon off;".into(),
+            state: "running".into(),
+            status: "Up 5 days".into(),
+            created: 1700000000,
+            ports: vec![],
+            labels: HashMap::new(),
+        }];
+        app.images = vec![ImageSummary {
+            id: "sha256:def456".into(),
+            repo_tags: vec!["nginx:latest".into()],
+            repo_digests: vec![],
+            size: 187000000,
+            created: 1699999000,
+            labels: HashMap::new(),
+        }];
+        app.volumes = vec![VolumeSummary {
+            name: "pgdata".into(),
+            driver: "local".into(),
+            mountpoint: "/var/lib/docker/volumes/pgdata".into(),
+            created_at: "2026-01-01".into(),
+            labels: HashMap::new(),
+            scope: "local".into(),
+        }];
+        app.networks = vec![NetworkSummary {
+            id: "net123".into(),
+            name: "bridge".into(),
+            driver: "bridge".into(),
+            scope: "local".into(),
+            internal: false,
+            ipv6_enabled: false,
+            containers: HashMap::new(),
+            labels: HashMap::new(),
+        }];
+        app
+    }
+
+    // alert_detail_lines
+    #[test]
+    fn alert_warning() {
+        let alert = Alert {
+            level: AlertLevel::Warning,
+            message: "test warning".into(),
+        };
+        let lines = alert_detail_lines(&alert);
+        assert!(lines.iter().any(|l| l.contains("Warning")));
+        assert!(lines.iter().any(|l| l.contains("test warning")));
+    }
+    #[test]
+    fn alert_critical() {
+        let alert = Alert {
+            level: AlertLevel::Critical,
+            message: "critical!".into(),
+        };
+        let lines = alert_detail_lines(&alert);
+        assert!(lines.iter().any(|l| l.contains("CRITICAL")));
+    }
+
+    // resource_detail_lines
+    #[test]
+    fn resource_containers() {
+        let app = make_app();
+        let lines = resource_detail_lines(&app, 0);
+        assert!(lines.iter().any(|l| l.contains("Containers")));
+    }
+    #[test]
+    fn resource_images() {
+        let app = make_app();
+        let lines = resource_detail_lines(&app, 1);
+        assert!(lines.iter().any(|l| l.contains("Images")));
+    }
+    #[test]
+    fn resource_volumes() {
+        let app = make_app();
+        let lines = resource_detail_lines(&app, 2);
+        assert!(lines.iter().any(|l| l.contains("Volumes")));
+    }
+    #[test]
+    fn resource_networks() {
+        let app = make_app();
+        let lines = resource_detail_lines(&app, 3);
+        assert!(lines.iter().any(|l| l.contains("Networks")));
+    }
+    #[test]
+    fn resource_out_of_range() {
+        let app = make_app();
+        let lines = resource_detail_lines(&app, 99);
+        assert!(lines.iter().any(|l| l.contains("No detail")));
+    }
+
+    // status_detail_lines
+    #[test]
+    fn status_no_info() {
+        let app = make_app();
+        let lines = status_detail_lines(&app, 0);
+        assert!(lines.iter().any(|l| l.contains("not available")));
+    }
+    #[test]
+    fn status_with_info_cpu() {
+        let mut app = make_app();
+        app.system_info = Some(SystemInfo {
+            runtime_type: RuntimeType::Docker,
+            server_version: "24.0".into(),
+            api_version: "1.43".into(),
+            os: "linux".into(),
+            arch: "amd64".into(),
+            kernel_version: "6.1.0".into(),
+            memory_total: 16 * 1024 * 1024 * 1024,
+            cpus: 8,
+            containers_total: 5,
+            containers_running: 3,
+            containers_paused: 0,
+            containers_stopped: 2,
+            images: 10,
+            storage_driver: "overlay2".into(),
+        });
+        let lines = status_detail_lines(&app, 0);
+        assert!(lines.iter().any(|l| l.contains("CPU")));
+        assert!(lines.iter().any(|l| l.contains("8")));
+    }
+
+    // container_detail_lines
+    #[test]
+    fn container_detail() {
+        let detail = ContainerDetail {
+            id: "abc".into(),
+            name: "nginx".into(),
+            image: "nginx:latest".into(),
+            created: "2026-01-01".into(),
+            state: ContainerState {
+                status: "running".into(),
+                running: true,
+                paused: false,
+                restarting: false,
+                oom_killed: false,
+                dead: false,
+                pid: 1234,
+                exit_code: 0,
+                started_at: "2026-01-01".into(),
+                finished_at: "".into(),
+            },
+            path: "/usr/sbin/nginx".into(),
+            args: vec!["-g".into(), "daemon off;".into()],
+            restart_count: 0,
+            driver: "overlay2".into(),
+            platform: "linux".into(),
+            log_path: "/var/log".into(),
+            labels: HashMap::new(),
+            env: vec!["PORT=80".into()],
+        };
+        let lines = container_detail_lines(&detail);
+        assert!(lines.iter().any(|l| l.contains("nginx")));
+        assert!(lines.iter().any(|l| l.contains("running")));
+        assert!(lines.iter().any(|l| l.contains("PORT=80")));
+    }
+    #[test]
+    fn container_detail_no_args() {
+        let detail = ContainerDetail {
+            id: "abc".into(),
+            name: "test".into(),
+            image: "alpine:latest".into(),
+            created: "2026-01-01".into(),
+            state: ContainerState {
+                status: "exited".into(),
+                running: false,
+                paused: false,
+                restarting: false,
+                oom_killed: false,
+                dead: false,
+                pid: 0,
+                exit_code: 1,
+                started_at: "2026-01-01".into(),
+                finished_at: "2026-01-02".into(),
+            },
+            path: "/bin/sh".into(),
+            args: vec![],
+            restart_count: 3,
+            driver: "overlay2".into(),
+            platform: "linux".into(),
+            log_path: "/var/log".into(),
+            labels: HashMap::from([("app".into(), "test".into())]),
+            env: vec![],
+        };
+        let lines = container_detail_lines(&detail);
+        assert!(lines.iter().any(|l| l.contains("/bin/sh")));
+        assert!(lines.iter().any(|l| l.contains("FinishedAt")));
+        assert!(lines.iter().any(|l| l.contains("[Labels]")));
+        assert!(lines.iter().any(|l| l.contains("app=test")));
+    }
+
+    // container_summary_lines
+    #[test]
+    fn container_summary() {
+        let app = make_app();
+        let lines = container_summary_lines(&app.containers[0]);
+        assert!(lines.iter().any(|l| l.contains("nginx")));
+        assert!(lines.iter().any(|l| l.contains("running")));
+    }
+
+    // image_detail_lines
+    #[test]
+    fn image_detail() {
+        let app = make_app();
+        let lines = image_detail_lines(&app.images[0]);
+        assert!(lines.iter().any(|l| l.contains("nginx:latest")));
+        assert!(lines.iter().any(|l| l.contains("MB")));
+    }
+    #[test]
+    fn image_detail_no_tags() {
+        let img = ImageSummary {
+            id: "sha256:abc".into(),
+            repo_tags: vec![],
+            repo_digests: vec!["sha256:digest123".into()],
+            size: 1024,
+            created: 1699999000,
+            labels: HashMap::new(),
+        };
+        let lines = image_detail_lines(&img);
+        assert!(lines.iter().any(|l| l.contains("<none>:<none>")));
+        assert!(lines.iter().any(|l| l.contains("[Digests]")));
+    }
+
+    // volume_detail_lines
+    #[test]
+    fn volume_detail() {
+        let app = make_app();
+        let lines = volume_detail_lines(&app.volumes[0]);
+        assert!(lines.iter().any(|l| l.contains("pgdata")));
+        assert!(lines.iter().any(|l| l.contains("local")));
+    }
+
+    // network_detail_lines
+    #[test]
+    fn network_detail() {
+        let app = make_app();
+        let lines = network_detail_lines(&app.networks[0]);
+        assert!(lines.iter().any(|l| l.contains("bridge")));
+    }
+    #[test]
+    fn network_with_containers() {
+        let mut app = make_app();
+        app.networks[0]
+            .containers
+            .insert("c1".into(), "nginx".into());
+        let lines = network_detail_lines(&app.networks[0]);
+        assert!(lines.iter().any(|l| l.contains("nginx")));
+        assert!(lines.iter().any(|l| l.contains("[Connected Containers]")));
+    }
+}
