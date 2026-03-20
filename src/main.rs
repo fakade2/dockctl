@@ -259,7 +259,10 @@ async fn open_explain(app: &mut App, container_svc: &ContainerService, use_inlin
     let (title, lines) = match app.active_panel {
         PanelId::Alerts => {
             if let Some(alert) = app.alerts.get(app.selected_index()) {
-                ("Alert Detail".to_string(), preview::alert_detail_lines(alert))
+                (
+                    "Alert Detail".to_string(),
+                    preview::alert_detail_lines(alert),
+                )
             } else {
                 return;
             }
@@ -293,7 +296,11 @@ async fn open_explain(app: &mut App, container_svc: &ContainerService, use_inlin
         }
         PanelId::Images => {
             if let Some(img) = app.images.get(app.selected_index()) {
-                let tag = img.repo_tags.first().cloned().unwrap_or_else(|| "<none>".into());
+                let tag = img
+                    .repo_tags
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "<none>".into());
                 (format!("Image: {}", tag), preview::image_detail_lines(img))
             } else {
                 return;
