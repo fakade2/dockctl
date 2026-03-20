@@ -108,7 +108,8 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
 
     // Normal mode
     match (key.code, key.modifiers) {
-        (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => ThemeAction::Quit,
+        // Only Ctrl+C quits directly. Use :q or :quit in command mode.
+        (KeyCode::Char('c'), KeyModifiers::CONTROL) => ThemeAction::Quit,
 
         // Enter command mode
         (KeyCode::Char(':'), _) => {
@@ -223,32 +224,35 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
             }
         }
 
-        // Show all resource aliases
+        // Show all resource aliases — inline detail view
         (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
-            ThemeAction::OpenPopup {
-                title: "Resource Aliases".to_string(),
-                content: vec![
-                    "Resource Commands".to_string(),
-                    "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}".to_string(),
-                    ":containers  :con  :cnt  :c    Container list".to_string(),
-                    ":images      :img  :im   :i    Image list".to_string(),
-                    ":volumes     :vol  :v           Volume list".to_string(),
-                    ":networks    :net  :n           Network list".to_string(),
-                    ":status      :pu               System pulses/dashboard".to_string(),
+            let sep = "─────────────────────────────────";
+            app.open_detail_view(
+                "Resource Aliases".to_string(),
+                vec![
+                    "Resource Commands".into(),
+                    sep.into(),
+                    ":containers  :con  :cnt  :c    Container list".into(),
+                    ":images      :img  :im   :i    Image list".into(),
+                    ":volumes     :vol  :v           Volume list".into(),
+                    ":networks    :net  :n           Network list".into(),
+                    ":status      :pu               System pulses/dashboard".into(),
+                    ":q           :quit  :exit       Quit dockctl".into(),
                     String::new(),
-                    "Navigation".to_string(),
-                    "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}".to_string(),
-                    "Esc          Go back to previous view".to_string(),
-                    "Ctrl+A       This alias list".to_string(),
+                    "Navigation".into(),
+                    sep.into(),
+                    "Esc          Command mode / go back".into(),
+                    "Ctrl+A       This alias list".into(),
                 ],
-            }
+            );
+            ThemeAction::Consumed
         }
 
-        // Help
-        (KeyCode::Char('?'), _) => ThemeAction::OpenPopup {
-            title: "Keybindings".to_string(),
-            content: help_lines(),
-        },
+        // Help — opens inline detail view (not popup)
+        (KeyCode::Char('?'), _) => {
+            app.open_detail_view("Keybindings".to_string(), help_lines());
+            ThemeAction::Consumed
+        }
 
         // Container actions — pass to main loop
         _ => ThemeAction::NotHandled,
@@ -266,8 +270,7 @@ fn handle_command_mode(key: KeyEvent, app: &mut App) -> ThemeAction {
             let cmd = app.operator_command_input.clone();
             app.operator_command_mode = false;
             app.operator_command_input.clear();
-            execute_command(app, &cmd);
-            ThemeAction::Consumed
+            execute_command(app, &cmd)
         }
         KeyCode::Backspace => {
             app.operator_command_input.pop();
@@ -306,20 +309,28 @@ fn handle_filter_mode(key: KeyEvent, app: &mut App) -> ThemeAction {
 }
 
 /// Execute a : command — switch resource view (with history stack).
-fn execute_command(app: &mut App, cmd: &str) {
+/// Execute a : command. Returns Quit if :q or :quit.
+fn execute_command(app: &mut App, cmd: &str) -> ThemeAction {
     let cmd = cmd.trim().to_lowercase();
+
+    // Quit commands
+    if cmd == "q" || cmd == "quit" || cmd == "exit" {
+        return ThemeAction::Quit;
+    }
+
+    // Resource switching
     let resource = fuzzy_match_resource(&cmd);
     if let Some(res) = resource {
-        app.push_view(res); // Uses history stack
-        // Sync active_panel so container actions in main.rs work
+        app.push_view(res);
         match res {
             "containers" => app.focus_panel(PanelId::Containers),
             "images" => app.focus_panel(PanelId::Images),
             "volumes" => app.focus_panel(PanelId::Volumes),
             "networks" => app.focus_panel(PanelId::Networks),
-            _ => {} // "status" doesn't need panel sync
+            _ => {}
         }
     }
+    ThemeAction::Consumed
 }
 
 /// Fuzzy match a command input to a resource name.
@@ -1717,13 +1728,14 @@ fn help_lines() -> Vec<String> {
         "l / →        Scroll columns right".into(),
         "g            Jump to top".into(),
         "G            Jump to bottom".into(),
-        "Esc          Go back / clear filter".into(),
+        "Esc          Command mode / go back / clear filter".into(),
         String::new(),
-        "Commands".into(),
+        "Commands (Esc or : to enter command mode)".into(),
         sep.into(),
-        ":            Command mode".into(),
-        "             :containers  :images  :volumes  :networks".into(),
-        "             :status  :pu  (pulses dashboard)".into(),
+        ":containers  :images  :volumes  :networks".into(),
+        ":status      :pu       Pulses dashboard".into(),
+        ":q           :quit     Quit dockctl".into(),
+        "/            Filter (regex)".into(),
         "/            Filter (regex)".into(),
         "Ctrl+A       Show all resource aliases".into(),
         String::new(),
@@ -1752,7 +1764,8 @@ fn help_lines() -> Vec<String> {
         "General".into(),
         sep.into(),
         "?            This help".into(),
-        "q            Quit (or close detail/help)".into(),
+        ":q           Quit dockctl".into(),
+        "Ctrl+C       Force quit".into(),
     ]
 }
 
