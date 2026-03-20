@@ -86,7 +86,15 @@ pub fn draw_log_view(frame: &mut Frame, area: Rect, app: &App) {
     let h_scroll = if app.log_view_wrap {
         0
     } else {
-        app.log_view_h_scroll
+        // Cap horizontal scroll at longest line minus visible width
+        let max_line_len = app
+            .log_view_lines
+            .iter()
+            .map(|l| l.len())
+            .max()
+            .unwrap_or(0);
+        let max_h = max_line_len.saturating_sub(inner.width as usize) as u16;
+        app.log_view_h_scroll.min(max_h)
     };
 
     let mut paragraph = Paragraph::new(all_lines).scroll((v_scroll, h_scroll));
