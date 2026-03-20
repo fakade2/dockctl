@@ -3,6 +3,7 @@ pub mod config;
 pub mod event;
 pub mod runtime;
 pub mod services;
+pub mod themes;
 pub mod tmux;
 pub mod ui;
 
@@ -12,7 +13,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::{
-    event::{KeyCode, KeyModifiers},
+    event::{KeyCode, KeyEvent},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -21,10 +22,11 @@ use tracing_subscriber::EnvFilter;
 
 use crate::app::{Alert, AlertLevel, App, InputMode, PanelId};
 use crate::event::{AppEvent, EventHandler};
-use crate::runtime::{detect_runtime, RuntimeType};
+use crate::runtime::{detect_runtime, ContainerRuntime, RuntimeType};
 use crate::services::{
     ContainerService, ImageService, NetworkService, PodService, SystemService, VolumeService,
 };
+use crate::themes::ThemeAction;
 use sysinfo::System;
 
 use crate::ui::preview;
@@ -95,10 +97,13 @@ async fn main() -> Result<()> {
     // Event handler
     let mut events = EventHandler::new(config.general.refresh_interval_ms);
 
+    // Create theme from config
+    let theme = themes::create_theme(&config.general.theme);
+
     // Main loop
     loop {
-        // Draw
-        terminal.draw(|frame| ui::draw(frame, &app, &config))?;
+        // Draw via theme
+        terminal.draw(|frame| theme.draw(frame, &app, &config))?;
 
         // Handle events
         match events.next().await? {
@@ -118,7 +123,7 @@ async fn main() -> Result<()> {
                 compute_alerts(&mut app);
             }
             AppEvent::Key(key) => {
-                // ── Popup mode ──────────────────────────────────────────
+                // ── Popup mode — same for all themes ────────────────────
                 if app.show_popup {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => {
@@ -135,155 +140,25 @@ async fn main() -> Result<()> {
                     continue;
                 }
 
-                // ── Search mode ─────────────────────────────────────────
+                // ── Search mode — same for all themes ───────────────────
                 if app.input_mode == InputMode::Search {
                     handle_search_input(&mut app, key.code);
                     continue;
                 }
 
-                // ── Normal mode ─────────────────────────────────────────
-                match (key.code, key.modifiers) {
-                    // Quit
-                    (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                // ── Theme-specific key handling ─────────────────────────
+                match theme.handle_key(key, &mut app, &config) {
+                    ThemeAction::Consumed => {}
+                    ThemeAction::Quit => {
                         app.should_quit = true;
                     }
-
-                    // Panel switching (1-7)
-                    (KeyCode::Char(n @ '1'..='7'), _) => {
-                        let num = n as u8 - b'0';
-                        if let Some(panel) = PanelId::from_number(num) {
-                            app.focus_panel(panel);
-                        }
+                    ThemeAction::OpenPopup { title, content } => {
+                        app.open_popup(title, content);
                     }
-
-                    // Tab cycles panels
-                    (KeyCode::Tab, _) => app.next_panel(),
-                    (KeyCode::BackTab, _) => app.previous_panel(),
-
-                    // Vertical navigation within active panel
-                    (KeyCode::Down | KeyCode::Char('j'), _) => app.next_item(),
-                    (KeyCode::Up | KeyCode::Char('k'), _) => app.previous_item(),
-
-                    // Horizontal column scrolling (right panels only)
-                    (KeyCode::Right | KeyCode::Char('l'), _)
-                        if app.active_panel.is_right() =>
-                    {
-                        let max_cols = match app.active_panel {
-                            PanelId::Containers => config.columns.containers.len(),
-                            PanelId::Images => config.columns.images.len(),
-                            PanelId::Volumes => config.columns.volumes.len(),
-                            PanelId::Networks => config.columns.networks.len(),
-                            _ => 0,
-                        };
-                        app.scroll_columns_right(max_cols);
+                    ThemeAction::NotHandled => {
+                        // Global actions (async operations)
+                        handle_global_key(key, &mut app, &container_svc, &runtime).await;
                     }
-                    (KeyCode::Left | KeyCode::Char('h'), _)
-                        if app.active_panel.is_right() =>
-                    {
-                        app.scroll_columns_left();
-                    }
-
-                    // Explain / Enter — open detail popup
-                    (KeyCode::Char('e') | KeyCode::Enter, _)
-                        if app.active_panel != PanelId::Containers
-                            || !matches!(key.code, KeyCode::Char('e')) =>
-                    {
-                        open_explain_popup(&mut app, &container_svc).await;
-                    }
-
-                    // Container actions (only when active_panel == Containers)
-                    (KeyCode::Char('s'), _) if app.active_panel == PanelId::Containers => {
-                        if let Some(id) = app.selected_container_id() {
-                            if let Err(e) = container_svc.stop(&id).await {
-                                tracing::warn!("Failed to stop container {}: {}", id, e);
-                            }
-                        }
-                    }
-                    (KeyCode::Char('r'), _) if app.active_panel == PanelId::Containers => {
-                        if let Some(id) = app.selected_container_id() {
-                            if let Err(e) = container_svc.restart(&id).await {
-                                tracing::warn!("Failed to restart container {}: {}", id, e);
-                            }
-                        }
-                    }
-                    (KeyCode::Char('x'), _) if app.active_panel == PanelId::Containers => {
-                        if let Some(id) = app.selected_container_id() {
-                            if let Err(e) = container_svc.remove(&id, true).await {
-                                tracing::warn!("Failed to remove container {}: {}", id, e);
-                            }
-                        }
-                    }
-                    (KeyCode::Char('l'), _) if app.active_panel == PanelId::Containers => {
-                        // Reserved for logs
-                    }
-                    (KeyCode::Char('e'), _) if app.active_panel == PanelId::Containers => {
-                        // 'e' on Containers panel — open explain popup
-                        open_explain_popup(&mut app, &container_svc).await;
-                    }
-
-                    // Tmux exec: Shift+E (capital E) — only on Containers panel
-                    (KeyCode::Char('E'), _) if app.active_panel == PanelId::Containers => {
-                        if let Some(id) = app.selected_container_id() {
-                            if tmux::is_tmux_available() {
-                                let bin = match runtime.runtime_type() {
-                                    RuntimeType::Docker => "docker",
-                                    RuntimeType::Podman => "podman",
-                                };
-                                let tmux_int = tmux::TmuxIntegration::new(bin);
-                                if let Err(e) = tmux_int.split_pane_exec(&id, "/bin/sh").await {
-                                    tracing::warn!("Failed to exec into container {}: {}", id, e);
-                                }
-                            }
-                        }
-                    }
-
-                    // Search
-                    (KeyCode::Char('/'), _) => {
-                        app.input_mode = InputMode::Search;
-                        app.search_query.clear();
-                    }
-
-                    // Keybindings help
-                    (KeyCode::Char('?'), _) => {
-                        app.open_popup(
-                            "Keybindings".to_string(),
-                            vec![
-                                "Navigation".to_string(),
-                                "─────────────────────────────".to_string(),
-                                "1-7          Focus panel".to_string(),
-                                "Tab          Next panel".to_string(),
-                                "Shift+Tab    Previous panel".to_string(),
-                                "j / ↓        Move down".to_string(),
-                                "k / ↑        Move up".to_string(),
-                                "h / ←        Scroll columns left".to_string(),
-                                "l / →        Scroll columns right".to_string(),
-                                String::new(),
-                                "Actions".to_string(),
-                                "─────────────────────────────".to_string(),
-                                "e / Enter    Explain (detail popup)".to_string(),
-                                "q            Quit (or close popup)".to_string(),
-                                "/            Search".to_string(),
-                                "?            This help".to_string(),
-                                String::new(),
-                                "Container Actions (panel 4)".to_string(),
-                                "─────────────────────────────".to_string(),
-                                "s            Stop container".to_string(),
-                                "r            Restart container".to_string(),
-                                "x            Remove container".to_string(),
-                                "l            View logs".to_string(),
-                                "E            Exec into container (tmux)".to_string(),
-                            ],
-                        );
-                    }
-
-                    // Esc in normal mode — clear search
-                    (KeyCode::Esc, _) => {
-                        if !app.search_query.is_empty() {
-                            app.search_query.clear();
-                        }
-                    }
-
-                    _ => {}
                 }
             }
             AppEvent::Resize(_, _) => {
@@ -302,6 +177,73 @@ async fn main() -> Result<()> {
     terminal.show_cursor()?;
 
     Ok(())
+}
+
+/// Handle global keys that are not theme-specific (async operations).
+/// Called when the theme returns `ThemeAction::NotHandled`.
+async fn handle_global_key(
+    key: KeyEvent,
+    app: &mut App,
+    container_svc: &ContainerService,
+    runtime: &Arc<Box<dyn ContainerRuntime>>,
+) {
+    let is_container_context =
+        app.active_panel == PanelId::Containers || app.operator_resource == "containers";
+
+    match key.code {
+        // Container actions (active when viewing containers in any theme)
+        KeyCode::Char('s') if is_container_context => {
+            if let Some(id) = app.selected_container_id() {
+                if let Err(e) = container_svc.stop(&id).await {
+                    tracing::warn!("Failed to stop container {}: {}", id, e);
+                }
+            }
+        }
+        KeyCode::Char('r') if is_container_context => {
+            if let Some(id) = app.selected_container_id() {
+                if let Err(e) = container_svc.restart(&id).await {
+                    tracing::warn!("Failed to restart container {}: {}", id, e);
+                }
+            }
+        }
+        KeyCode::Char('x') if is_container_context => {
+            if let Some(id) = app.selected_container_id() {
+                if let Err(e) = container_svc.remove(&id, true).await {
+                    tracing::warn!("Failed to remove container {}: {}", id, e);
+                }
+            }
+        }
+        KeyCode::Char('l') if is_container_context => {
+            // Reserved for logs
+        }
+        KeyCode::Char('E') if is_container_context => {
+            if let Some(id) = app.selected_container_id() {
+                if tmux::is_tmux_available() {
+                    let bin = match runtime.runtime_type() {
+                        RuntimeType::Docker => "docker",
+                        RuntimeType::Podman => "podman",
+                    };
+                    let tmux_int = tmux::TmuxIntegration::new(bin);
+                    if let Err(e) = tmux_int.split_pane_exec(&id, "/bin/sh").await {
+                        tracing::warn!("Failed to exec into container {}: {}", id, e);
+                    }
+                }
+            }
+        }
+
+        // Search
+        KeyCode::Char('/') => {
+            app.input_mode = InputMode::Search;
+            app.search_query.clear();
+        }
+
+        // Explain popup
+        KeyCode::Char('e') | KeyCode::Enter => {
+            open_explain_popup(app, container_svc).await;
+        }
+
+        _ => {}
+    }
 }
 
 /// Open the explain/detail popup for the currently selected item in the active panel.

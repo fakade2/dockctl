@@ -46,7 +46,8 @@ impl Default for GeneralConfig {
         Self {
             default_runtime: "auto".to_string(),
             refresh_interval_ms: 1000,
-            theme: "default".to_string(),
+            // Valid values: "dashboard" (lazygit-style), "operator" (k9s-style)
+            theme: "dashboard".to_string(),
         }
     }
 }

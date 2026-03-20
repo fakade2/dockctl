@@ -185,6 +185,13 @@ pub struct App {
     // Runtime capabilities
     pub supports_pods: bool,
 
+    // Operator theme state
+    pub operator_resource: String,
+    pub operator_command_mode: bool,
+    pub operator_command_input: String,
+    pub operator_filter: String,
+    pub operator_filter_active: bool,
+
     // Lifecycle
     pub should_quit: bool,
 }
@@ -234,6 +241,13 @@ impl App {
             dangling_images_count: 0,
 
             supports_pods,
+
+            operator_resource: "containers".to_string(),
+            operator_command_mode: false,
+            operator_command_input: String::new(),
+            operator_filter: String::new(),
+            operator_filter_active: false,
+
             should_quit: false,
         }
     }
