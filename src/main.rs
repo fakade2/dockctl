@@ -161,7 +161,8 @@ async fn main() -> Result<()> {
                     }
                     ThemeAction::NotHandled => {
                         // Global actions (async operations)
-                        handle_global_key(key, &mut app, &container_svc, &runtime).await;
+                        handle_global_key(key, &mut app, &container_svc, &runtime, theme.name())
+                            .await;
                     }
                 }
             }
@@ -190,6 +191,7 @@ async fn handle_global_key(
     app: &mut App,
     container_svc: &ContainerService,
     runtime: &Arc<Box<dyn ContainerRuntime>>,
+    theme_name: &str,
 ) {
     let is_container_context =
         app.active_panel == PanelId::Containers || app.operator_resource == "containers";
@@ -241,71 +243,88 @@ async fn handle_global_key(
             app.search_query.clear();
         }
 
-        // Explain popup
+        // Explain / detail view
         KeyCode::Char('e') | KeyCode::Enter => {
-            open_explain_popup(app, container_svc).await;
+            let use_inline = theme_name == "operator";
+            open_explain(app, container_svc, use_inline).await;
         }
 
         _ => {}
     }
 }
 
-/// Open the explain/detail popup for the currently selected item in the active panel.
-async fn open_explain_popup(app: &mut App, container_svc: &ContainerService) {
-    match app.active_panel {
+/// Open the detail view for the currently selected item.
+/// Uses inline detail view for operator theme, popup for dashboard theme.
+async fn open_explain(app: &mut App, container_svc: &ContainerService, use_inline: bool) {
+    let (title, lines) = match app.active_panel {
         PanelId::Alerts => {
             if let Some(alert) = app.alerts.get(app.selected_index()) {
-                app.open_popup(
-                    "Alert Detail".to_string(),
-                    preview::alert_detail_lines(alert),
-                );
+                ("Alert Detail".to_string(), preview::alert_detail_lines(alert))
+            } else {
+                return;
             }
         }
-        PanelId::Resources => {
-            app.open_popup(
-                "Resource Detail".to_string(),
-                preview::resource_detail_lines(app, app.selected_index()),
-            );
-        }
-        PanelId::Status => {
-            app.open_popup(
-                "Status Detail".to_string(),
-                preview::status_detail_lines(app, app.selected_index()),
-            );
-        }
+        PanelId::Resources => (
+            "Resource Detail".to_string(),
+            preview::resource_detail_lines(app, app.selected_index()),
+        ),
+        PanelId::Status => (
+            "Status Detail".to_string(),
+            preview::status_detail_lines(app, app.selected_index()),
+        ),
         PanelId::Containers => {
             if let Some(id) = app.selected_container_id() {
-                let lines = if let Ok(detail) = container_svc.get_detail(&id).await {
+                let detail_lines = if let Ok(detail) = container_svc.get_detail(&id).await {
                     preview::container_detail_lines(&detail)
                 } else if let Some(c) = app.containers.get(app.selected_index()) {
                     preview::container_summary_lines(c)
                 } else {
                     vec!["No container selected".to_string()]
                 };
-                app.open_popup("Container Detail".to_string(), lines);
+                let name = app
+                    .containers
+                    .get(app.selected_index())
+                    .map(|c| crate::ui::container_display_name(&c.names))
+                    .unwrap_or_default();
+                (format!("Container: {}", name), detail_lines)
+            } else {
+                return;
             }
         }
         PanelId::Images => {
             if let Some(img) = app.images.get(app.selected_index()) {
-                app.open_popup("Image Detail".to_string(), preview::image_detail_lines(img));
+                let tag = img.repo_tags.first().cloned().unwrap_or_else(|| "<none>".into());
+                (format!("Image: {}", tag), preview::image_detail_lines(img))
+            } else {
+                return;
             }
         }
         PanelId::Volumes => {
             if let Some(vol) = app.volumes.get(app.selected_index()) {
-                app.open_popup(
-                    "Volume Detail".to_string(),
+                (
+                    format!("Volume: {}", vol.name),
                     preview::volume_detail_lines(vol),
-                );
+                )
+            } else {
+                return;
             }
         }
         PanelId::Networks => {
             if let Some(net) = app.networks.get(app.selected_index()) {
-                app.open_popup(
-                    "Network Detail".to_string(),
+                (
+                    format!("Network: {}", net.name),
                     preview::network_detail_lines(net),
-                );
+                )
+            } else {
+                return;
             }
         }
+    };
+
+    if use_inline {
+        app.open_detail_view(title, lines);
+    } else {
+        app.open_popup(title, lines);
     }
 }
 
