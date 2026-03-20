@@ -175,8 +175,13 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
         (KeyCode::Left, KeyModifiers::SHIFT) => ThemeAction::Consumed,
         (KeyCode::Right, KeyModifiers::SHIFT) => ThemeAction::Consumed,
 
-        // Column scrolling
-        (KeyCode::Right | KeyCode::Char('l'), _) => {
+        // Column scrolling — l scrolls right UNLESS on containers (l = logs there)
+        (KeyCode::Right, _) => {
+            let max_cols = operator_max_cols(app, config);
+            app.scroll_columns_right(max_cols);
+            ThemeAction::Consumed
+        }
+        (KeyCode::Char('l'), _) if app.operator_resource != "containers" => {
             let max_cols = operator_max_cols(app, config);
             app.scroll_columns_right(max_cols);
             ThemeAction::Consumed
