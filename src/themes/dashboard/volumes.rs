@@ -6,9 +6,9 @@ use ratatui::{
 };
 
 use crate::app::{App, PanelId};
-use crate::ui::{
-    create_table_header, format_scroll_hint, panel_block, selected_row_style, truncate_str,
-    visible_column_count,
+use crate::display::{
+    collapsed_panel_line, create_table_header, format_scroll_hint, panel_block, selected_row_style,
+    truncate_str, visible_column_count,
 };
 
 /// Renders the Volumes panel (panel 6, right column).
@@ -25,8 +25,8 @@ pub fn draw_volume_panel(
     let title = format!("Volumes ({})", count);
 
     if !is_expanded {
-        let block = panel_block(&title, PanelId::Volumes.number(), is_focused);
-        frame.render_widget(block, area);
+        let line = collapsed_panel_line(&title, PanelId::Volumes.number(), is_focused);
+        frame.render_widget(ratatui::widgets::Paragraph::new(line), area);
         return;
     }
 

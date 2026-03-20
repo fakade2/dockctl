@@ -208,6 +208,14 @@ pub struct App {
     pub detail_view_content: Vec<String>,
     pub detail_view_scroll: u16,
 
+    // Log viewer state
+    pub log_view_active: bool,
+    pub log_view_container_id: String,
+    pub log_view_container_name: String,
+    pub log_view_lines: Vec<String>,
+    pub log_view_scroll: u16,
+    pub log_view_follow: bool, // auto-scroll + refresh on tick
+
     // Lifecycle
     pub should_quit: bool,
 }
@@ -273,6 +281,13 @@ impl App {
             detail_view_content: Vec::new(),
             detail_view_scroll: 0,
 
+            log_view_active: false,
+            log_view_container_id: String::new(),
+            log_view_container_name: String::new(),
+            log_view_lines: Vec::new(),
+            log_view_scroll: 0,
+            log_view_follow: false,
+
             should_quit: false,
         }
     }
@@ -334,6 +349,32 @@ impl App {
         self.detail_view_content.clear();
         self.detail_view_title.clear();
         self.detail_view_scroll = 0;
+    }
+
+    /// Open the inline log viewer for a container.
+    pub fn open_log_view(
+        &mut self,
+        container_id: String,
+        container_name: String,
+        lines: Vec<String>,
+    ) {
+        self.log_view_active = true;
+        self.log_view_container_id = container_id;
+        self.log_view_container_name = container_name;
+        self.log_view_follow = true;
+        self.log_view_lines = lines;
+        // Auto-scroll to bottom
+        self.log_view_scroll = self.log_view_lines.len().saturating_sub(1) as u16;
+    }
+
+    /// Close the log viewer and return to the table.
+    pub fn close_log_view(&mut self) {
+        self.log_view_active = false;
+        self.log_view_container_id.clear();
+        self.log_view_container_name.clear();
+        self.log_view_lines.clear();
+        self.log_view_scroll = 0;
+        self.log_view_follow = false;
     }
 
     // ------------------------------------------------------------------
@@ -956,6 +997,29 @@ mod tests {
         assert!(app.detail_view_title.is_empty());
         assert!(app.detail_view_content.is_empty());
         assert_eq!(app.detail_view_scroll, 0);
+    }
+
+    #[test]
+    fn log_view_open_close() {
+        let mut app = App::new(false);
+        assert!(!app.log_view_active);
+
+        app.open_log_view(
+            "abc".into(),
+            "nginx".into(),
+            vec!["line1".into(), "line2".into()],
+        );
+        assert!(app.log_view_active);
+        assert_eq!(app.log_view_container_name, "nginx");
+        assert!(app.log_view_follow);
+        assert_eq!(app.log_view_scroll, 1); // len=2, saturating_sub(1)=1
+
+        app.close_log_view();
+        assert!(!app.log_view_active);
+        assert!(app.log_view_container_id.is_empty());
+        assert!(app.log_view_lines.is_empty());
+        assert_eq!(app.log_view_scroll, 0);
+        assert!(!app.log_view_follow);
     }
 
     #[test]

@@ -1,11 +1,11 @@
 pub mod app;
 pub mod config;
+pub mod display;
 pub mod event;
 pub mod runtime;
 pub mod services;
 pub mod themes;
 pub mod tmux;
-pub mod ui;
 
 use std::io;
 use std::sync::Arc;
@@ -13,23 +13,22 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::{
-    event::{KeyCode, KeyEvent},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-use crate::app::{Alert, AlertLevel, App, InputMode, PanelId};
+use crate::app::{Alert, AlertLevel, App, PanelId};
 use crate::event::{AppEvent, EventHandler};
-use crate::runtime::{ContainerRuntime, RuntimeType, detect_runtime};
+use crate::runtime::{RuntimeType, detect_runtime};
 use crate::services::{
     ContainerService, ImageService, NetworkService, PodService, SystemService, VolumeService,
 };
 use crate::themes::ThemeAction;
 use sysinfo::System;
 
-use crate::ui::preview;
+use crate::display::preview;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -127,42 +126,75 @@ async fn main() -> Result<()> {
                 compute_alerts(&mut app);
             }
             AppEvent::Key(key) => {
-                // ── Popup mode — same for all themes ────────────────────
-                if app.show_popup {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => {
-                            app.close_popup();
-                        }
-                        KeyCode::Char('j') | KeyCode::Down => {
-                            app.popup_scroll = app.popup_scroll.saturating_add(1);
-                        }
-                        KeyCode::Char('k') | KeyCode::Up => {
-                            app.popup_scroll = app.popup_scroll.saturating_sub(1);
-                        }
-                        _ => {} // ignore everything else in popup
-                    }
-                    continue;
-                }
-
-                // ── Search mode — same for all themes ───────────────────
-                if app.input_mode == InputMode::Search {
-                    handle_search_input(&mut app, key.code);
-                    continue;
-                }
-
-                // ── Theme-specific key handling ─────────────────────────
+                // All key handling delegated to the active theme
                 match theme.handle_key(key, &mut app, &config) {
                     ThemeAction::Consumed => {}
+                    ThemeAction::NotHandled => {}
                     ThemeAction::Quit => {
                         app.should_quit = true;
                     }
                     ThemeAction::OpenPopup { title, content } => {
                         app.open_popup(title, content);
                     }
-                    ThemeAction::NotHandled => {
-                        // Global actions (async operations)
-                        handle_global_key(key, &mut app, &container_svc, &runtime, theme.name())
-                            .await;
+                    ThemeAction::FetchLogs { id, name, tail } => {
+                        if let Ok(logs) = container_svc.get_logs(&id, Some(tail)).await {
+                            let lines: Vec<String> = logs.lines().map(String::from).collect();
+                            app.open_log_view(id, name, lines);
+                        }
+                    }
+                    ThemeAction::FetchDetail { id } => {
+                        let name = app
+                            .containers
+                            .iter()
+                            .find(|c| c.id == id)
+                            .map(|c| crate::display::container_display_name(&c.names))
+                            .unwrap_or_default();
+                        let lines = if let Ok(detail) = container_svc.get_detail(&id).await {
+                            crate::display::preview::container_detail_lines(&detail)
+                        } else {
+                            vec!["Failed to fetch detail".into()]
+                        };
+                        app.open_detail_view(format!("Container: {}", name), lines);
+                    }
+                    ThemeAction::RefreshLogs { id, tail } => {
+                        if let Ok(logs) = container_svc.get_logs(&id, Some(tail)).await {
+                            app.log_view_lines = logs.lines().map(String::from).collect();
+                            app.log_view_scroll = if app.log_view_follow {
+                                app.log_view_lines.len().saturating_sub(1) as u16
+                            } else {
+                                0
+                            };
+                        }
+                    }
+                    ThemeAction::StopContainer { id } => {
+                        if let Err(e) = container_svc.stop(&id).await {
+                            tracing::warn!("Failed to stop container {}: {}", id, e);
+                        }
+                    }
+                    ThemeAction::RestartContainer { id } => {
+                        if let Err(e) = container_svc.restart(&id).await {
+                            tracing::warn!("Failed to restart container {}: {}", id, e);
+                        }
+                    }
+                    ThemeAction::RemoveContainer { id } => {
+                        if let Err(e) = container_svc.remove(&id, true).await {
+                            tracing::warn!("Failed to remove container {}: {}", id, e);
+                        }
+                    }
+                    ThemeAction::ExecContainer { id } => {
+                        if tmux::is_tmux_available() {
+                            let bin = match runtime.runtime_type() {
+                                RuntimeType::Docker => "docker",
+                                RuntimeType::Podman => "podman",
+                            };
+                            let tmux_int = tmux::TmuxIntegration::new(bin);
+                            if let Err(e) = tmux_int.split_pane_exec(&id, "/bin/sh").await {
+                                tracing::warn!("Failed to exec: {}", e);
+                            }
+                        }
+                    }
+                    ThemeAction::ExplainItem { use_inline } => {
+                        open_explain(&mut app, &container_svc, use_inline).await;
                     }
                 }
             }
@@ -182,75 +214,6 @@ async fn main() -> Result<()> {
     terminal.show_cursor()?;
 
     Ok(())
-}
-
-/// Handle global keys that are not theme-specific (async operations).
-/// Called when the theme returns `ThemeAction::NotHandled`.
-async fn handle_global_key(
-    key: KeyEvent,
-    app: &mut App,
-    container_svc: &ContainerService,
-    runtime: &Arc<Box<dyn ContainerRuntime>>,
-    theme_name: &str,
-) {
-    let is_container_context =
-        app.active_panel == PanelId::Containers || app.operator_resource == "containers";
-
-    match key.code {
-        // Container actions (active when viewing containers in any theme)
-        KeyCode::Char('s') if is_container_context => {
-            if let Some(id) = app.selected_container_id()
-                && let Err(e) = container_svc.stop(&id).await
-            {
-                tracing::warn!("Failed to stop container {}: {}", id, e);
-            }
-        }
-        KeyCode::Char('r') if is_container_context => {
-            if let Some(id) = app.selected_container_id()
-                && let Err(e) = container_svc.restart(&id).await
-            {
-                tracing::warn!("Failed to restart container {}: {}", id, e);
-            }
-        }
-        KeyCode::Char('x') if is_container_context => {
-            if let Some(id) = app.selected_container_id()
-                && let Err(e) = container_svc.remove(&id, true).await
-            {
-                tracing::warn!("Failed to remove container {}: {}", id, e);
-            }
-        }
-        KeyCode::Char('l') if is_container_context => {
-            // Reserved for logs
-        }
-        KeyCode::Char('E') if is_container_context => {
-            if let Some(id) = app.selected_container_id()
-                && tmux::is_tmux_available()
-            {
-                let bin = match runtime.runtime_type() {
-                    RuntimeType::Docker => "docker",
-                    RuntimeType::Podman => "podman",
-                };
-                let tmux_int = tmux::TmuxIntegration::new(bin);
-                if let Err(e) = tmux_int.split_pane_exec(&id, "/bin/sh").await {
-                    tracing::warn!("Failed to exec into container {}: {}", id, e);
-                }
-            }
-        }
-
-        // Search
-        KeyCode::Char('/') => {
-            app.input_mode = InputMode::Search;
-            app.search_query.clear();
-        }
-
-        // Explain / detail view
-        KeyCode::Char('e') | KeyCode::Enter => {
-            let use_inline = theme_name == "operator";
-            open_explain(app, container_svc, use_inline).await;
-        }
-
-        _ => {}
-    }
 }
 
 /// Open the detail view for the currently selected item.
@@ -287,7 +250,7 @@ async fn open_explain(app: &mut App, container_svc: &ContainerService, use_inlin
                 let name = app
                     .containers
                     .get(app.selected_index())
-                    .map(|c| crate::ui::container_display_name(&c.names))
+                    .map(|c| crate::display::container_display_name(&c.names))
                     .unwrap_or_default();
                 (format!("Container: {}", name), detail_lines)
             } else {
@@ -489,23 +452,16 @@ async fn load_panel_data(
             }
         }
     }
-}
 
-fn handle_search_input(app: &mut App, key: KeyCode) {
-    match key {
-        KeyCode::Esc => {
-            app.input_mode = InputMode::Normal;
-            app.search_query.clear();
-        }
-        KeyCode::Enter => {
-            app.input_mode = InputMode::Normal;
-        }
-        KeyCode::Backspace => {
-            app.search_query.pop();
-        }
-        KeyCode::Char(c) => {
-            app.search_query.push(c);
-        }
-        _ => {}
+    // Refresh logs if log view is active and follow mode is on
+    if app.log_view_active
+        && app.log_view_follow
+        && let Ok(logs) = container_svc
+            .get_logs(&app.log_view_container_id, Some(500))
+            .await
+    {
+        app.log_view_lines = logs.lines().map(String::from).collect();
+        // Auto-scroll to bottom in follow mode
+        app.log_view_scroll = app.log_view_lines.len().saturating_sub(1) as u16;
     }
 }

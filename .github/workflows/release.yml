@@ -134,13 +134,12 @@ jobs:
         run: |
           VERSION="${{ needs.check-version.outputs.version }}"
 
-          # Flatten artifact directories
+          # Flatten artifact directories (each artifact is in its own subdir)
           cd dist
-          for dir in */; do
-            mv "$dir"/* . 2>/dev/null || true
-            rmdir "$dir" 2>/dev/null || true
-          done
+          find . -mindepth 2 -type f -exec mv {} . \;
+          find . -mindepth 1 -type d -exec rmdir {} + 2>/dev/null || true
           sha256sum dockctl-* > checksums.txt
+          ls -la
           cd ..
 
           # Create release on the existing tag with auto-generated notes
