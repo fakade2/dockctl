@@ -202,6 +202,12 @@ pub struct App {
     // Wide mode (show extra columns)
     pub wide_mode: bool,
 
+    // Inline detail view (K9s-style — replaces table, not a popup)
+    pub detail_view_active: bool,
+    pub detail_view_title: String,
+    pub detail_view_content: Vec<String>,
+    pub detail_view_scroll: u16,
+
     // Status dot indicators cache: container_id -> health status
     // true = healthy (green dot), false = unhealthy (red dot), None = unknown
     pub container_health: HashMap<String, Option<bool>>,
@@ -268,6 +274,11 @@ impl App {
             wide_mode: false,
             container_health: HashMap::new(),
 
+            detail_view_active: false,
+            detail_view_title: String::new(),
+            detail_view_content: Vec::new(),
+            detail_view_scroll: 0,
+
             should_quit: false,
         }
     }
@@ -313,6 +324,22 @@ impl App {
     /// Toggle wide mode.
     pub fn toggle_wide_mode(&mut self) {
         self.wide_mode = !self.wide_mode;
+    }
+
+    /// Open an inline detail view (replaces the table, K9s-style).
+    pub fn open_detail_view(&mut self, title: String, content: Vec<String>) {
+        self.detail_view_active = true;
+        self.detail_view_title = title;
+        self.detail_view_content = content;
+        self.detail_view_scroll = 0;
+    }
+
+    /// Close the inline detail view and return to the table.
+    pub fn close_detail_view(&mut self) {
+        self.detail_view_active = false;
+        self.detail_view_content.clear();
+        self.detail_view_title.clear();
+        self.detail_view_scroll = 0;
     }
 
     // ------------------------------------------------------------------

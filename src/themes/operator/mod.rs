@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap},
 };
 
 use crate::app::{AlertLevel, App, PanelId};
@@ -69,6 +69,33 @@ fn current_columns<'a>(app: &App, config: &'a DockctlConfig) -> &'a [String] {
 }
 
 fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> ThemeAction {
+    // Detail view mode — full-screen scrollable text, handle keys first
+    if app.detail_view_active {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.close_detail_view();
+                return ThemeAction::Consumed;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.detail_view_scroll = app.detail_view_scroll.saturating_add(1);
+                return ThemeAction::Consumed;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.detail_view_scroll = app.detail_view_scroll.saturating_sub(1);
+                return ThemeAction::Consumed;
+            }
+            KeyCode::Char('g') => {
+                app.detail_view_scroll = 0;
+                return ThemeAction::Consumed;
+            }
+            KeyCode::Char('G') => {
+                app.detail_view_scroll = app.detail_view_content.len().saturating_sub(1) as u16;
+                return ThemeAction::Consumed;
+            }
+            _ => return ThemeAction::Consumed,
+        }
+    }
+
     // Command mode — typing a : command
     if app.operator_command_mode {
         return handle_command_mode(key, app);
@@ -160,10 +187,11 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
             ThemeAction::Consumed
         }
 
-        // Describe — open detail popup for selected item
+        // Describe — open inline detail view for selected item
         (KeyCode::Char('d'), _) => {
             let (title, content) = describe_selected(app);
-            ThemeAction::OpenPopup { title, content }
+            app.open_detail_view(title, content);
+            ThemeAction::Consumed
         }
 
         // Explain / Enter — open detail popup
@@ -455,11 +483,11 @@ fn describe_selected(app: &App) -> (String, Vec<String>) {
 // ---------------------------------------------------------------------------
 
 fn draw_operator(frame: &mut Frame, app: &App, config: &DockctlConfig) {
-    // Layout: header (5) | table (fills) | footer (1)
+    // Layout: header (4) | table/detail (fills) | footer (1)
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(5),
+            Constraint::Length(4),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
@@ -470,13 +498,14 @@ fn draw_operator(frame: &mut Frame, app: &App, config: &DockctlConfig) {
     let footer_area = outer[2];
 
     draw_header(frame, header_area, app);
-    draw_resource_table(frame, table_area, app, config);
-    draw_footer(frame, footer_area, app);
 
-    // Popup overlay (if open)
-    if app.show_popup {
-        draw_popup(frame, app);
+    if app.detail_view_active {
+        draw_detail_view(frame, table_area, app);
+    } else {
+        draw_resource_table(frame, table_area, app, config);
     }
+
+    draw_footer(frame, footer_area, app);
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
@@ -486,33 +515,16 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let logo_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
-    let breadcrumb_style = Style::default().fg(Color::White);
     let dim = Style::default().fg(Color::DarkGray);
+    let white = Style::default().fg(Color::White);
     let green = Style::default().fg(Color::Green);
     let red = Style::default().fg(Color::Red);
     let cyan = Style::default().fg(Color::Cyan);
+    let yellow = Style::default().fg(Color::Yellow);
 
-    // Row 1: logo + breadcrumb + runtime info (right-aligned)
-    let runtime_str = if let Some(info) = &app.system_info {
-        format!("{} v{}", info.runtime_type, info.server_version)
-    } else {
-        "connecting...".to_string()
-    };
-
-    let row1_left = vec![
-        Span::styled(" dockctl ", logo_style),
-        Span::styled(" > ", dim),
-        Span::styled(resource_cap, breadcrumb_style),
-    ];
-    let row1_left_len: usize = row1_left.iter().map(|s| s.width()).sum();
-    let row1_right_len = runtime_str.len() + 1;
-    let row1_pad = (area.width as usize).saturating_sub(row1_left_len + row1_right_len);
-
-    let mut row1_spans = row1_left;
-    row1_spans.push(Span::raw(" ".repeat(row1_pad)));
-    row1_spans.push(Span::styled(format!("{} ", runtime_str), dim));
-
-    // Row 2: resource counts + system stats
+    // --- Row 1 ---
+    // Left: " dockctl > Containers(9)[all]" or " dockctl > Containers > nginx-proxy"
+    // Right: "Docker v29.2.1 | C:9/2 I:15 V:8 N:4"
     let running = app
         .containers
         .iter()
@@ -520,72 +532,126 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         .count();
     let stopped = app.containers.len() - running;
 
-    let mut row2_spans = vec![
-        Span::styled(" C:", dim),
+    let (_total, filtered) = row_counts(app);
+    let filter_tag = if app.operator_filter.is_empty() {
+        "all".to_string()
+    } else {
+        app.operator_filter.clone()
+    };
+
+    let row1_left: Vec<Span> = if app.detail_view_active {
+        // Breadcrumb with detail item: dockctl > Containers > nginx-proxy
+        let detail_name = app
+            .detail_view_title
+            .split(": ")
+            .nth(1)
+            .unwrap_or(&app.detail_view_title);
+        vec![
+            Span::styled(" dockctl", logo_style),
+            Span::styled(" > ", dim),
+            Span::styled(resource_cap.clone(), white),
+            Span::styled(" > ", dim),
+            Span::styled(detail_name.to_string(), white),
+        ]
+    } else {
+        // Normal breadcrumb: dockctl > Containers(9)[all]
+        vec![
+            Span::styled(" dockctl", logo_style),
+            Span::styled(" > ", dim),
+            Span::styled(format!("{}({})", resource_cap, filtered), white),
+            Span::styled(format!("[{}]", filter_tag), yellow),
+        ]
+    };
+
+    // Right side: runtime + counts
+    let runtime_str = if let Some(info) = &app.system_info {
+        format!("{} v{}", info.runtime_type, info.server_version)
+    } else {
+        "connecting...".to_string()
+    };
+
+    let mut row1_right: Vec<Span> = vec![
+        Span::styled(format!("{} ", runtime_str), dim),
+        Span::styled("| ", dim),
+        Span::styled("C:", dim),
         Span::styled(format!("{}", running), green),
         Span::styled("/", dim),
         Span::styled(format!("{}", stopped), if stopped > 0 { red } else { dim }),
-        Span::styled("  I:", dim),
+        Span::styled(" I:", dim),
         Span::styled(format!("{}", app.images.len()), cyan),
-        Span::styled("  V:", dim),
+        Span::styled(" V:", dim),
         Span::styled(format!("{}", app.volumes.len()), cyan),
-        Span::styled("  N:", dim),
+        Span::styled(" N:", dim),
         Span::styled(format!("{}", app.networks.len()), cyan),
+        Span::raw(" "),
     ];
 
-    // System stats on the right of row 2
+    let row1_left_len: usize = row1_left.iter().map(|s| s.width()).sum();
+    let row1_right_len: usize = row1_right.iter().map(|s| s.width()).sum();
+    let row1_pad = (area.width as usize).saturating_sub(row1_left_len + row1_right_len);
+
+    let mut row1_spans = row1_left;
+    row1_spans.push(Span::raw(" ".repeat(row1_pad)));
+    row1_spans.append(&mut row1_right);
+
+    // --- Row 2 ---
+    // Left: context-sensitive shortcuts
+    // Right: CPU:12% RAM:68% | 8cores 16GB
+    let row2_left_spans = if app.detail_view_active {
+        // Detail view shortcuts
+        vec![
+            Span::raw(" "),
+            Span::styled("<Esc>", Style::default().fg(Color::Cyan)),
+            Span::styled("back ", dim),
+            Span::styled("<j/k>", Style::default().fg(Color::Cyan)),
+            Span::styled("scroll ", dim),
+            Span::styled("<g>", Style::default().fg(Color::Cyan)),
+            Span::styled("top ", dim),
+            Span::styled("<G>", Style::default().fg(Color::Cyan)),
+            Span::styled("bottom", dim),
+        ]
+    } else {
+        build_shortcut_row(resource)
+    };
+
     let cpu_pct = app.host_cpu_percent;
     let mem_pct = if app.host_memory_total > 0 {
         (app.host_memory_used as f64 / app.host_memory_total as f64) * 100.0
     } else {
         0.0
     };
-
     let cpu_color = percentage_color(cpu_pct);
     let mem_color = percentage_color(mem_pct);
 
-    let stats_str = format!(
-        "CPU:{:.0}%  RAM:{:.0}%  {}",
-        cpu_pct,
-        mem_pct,
-        if let Some(info) = &app.system_info {
-            format!("{}cores/{}", info.cpus, format_bytes(info.memory_total))
-        } else {
-            String::new()
-        }
-    );
-
-    let row2_left_len: usize = row2_spans.iter().map(|s| s.width()).sum();
-    let row2_right_len = stats_str.len() + 1;
-    let row2_pad = (area.width as usize).saturating_sub(row2_left_len + row2_right_len + 2);
-
-    row2_spans.push(Span::raw(" ".repeat(row2_pad)));
-    row2_spans.push(Span::styled("CPU:", dim));
-    row2_spans.push(Span::styled(
-        format!("{:.0}%", cpu_pct),
-        Style::default().fg(cpu_color),
-    ));
-    row2_spans.push(Span::styled("  RAM:", dim));
-    row2_spans.push(Span::styled(
-        format!("{:.0}%", mem_pct),
-        Style::default().fg(mem_color),
-    ));
+    let mut row2_right: Vec<Span> = vec![
+        Span::styled("CPU:", dim),
+        Span::styled(format!("{:.0}%", cpu_pct), Style::default().fg(cpu_color)),
+        Span::styled(" RAM:", dim),
+        Span::styled(format!("{:.0}%", mem_pct), Style::default().fg(mem_color)),
+    ];
 
     if let Some(info) = &app.system_info {
-        row2_spans.push(Span::styled(
-            format!("  {}cores/{} ", info.cpus, format_bytes(info.memory_total)),
+        row2_right.push(Span::styled(
+            format!(
+                " | {}cores {}  ",
+                info.cpus,
+                format_bytes(info.memory_total)
+            ),
             dim,
         ));
+    } else {
+        row2_right.push(Span::raw(" "));
     }
 
-    // Row 3: context-sensitive shortcuts
-    let row3_spans = build_shortcut_row(resource);
+    let row2_left_len: usize = row2_left_spans.iter().map(|s| s.width()).sum();
+    let row2_right_len: usize = row2_right.iter().map(|s| s.width()).sum();
+    let row2_pad = (area.width as usize).saturating_sub(row2_left_len + row2_right_len);
 
-    let lines = vec![
-        Line::from(row1_spans),
-        Line::from(row2_spans),
-        Line::from(row3_spans),
-    ];
+    let mut row2_spans = row2_left_spans;
+    row2_spans.push(Span::raw(" ".repeat(row2_pad)));
+    row2_spans.append(&mut row2_right);
+
+    let lines = vec![Line::from(row1_spans), Line::from(row2_spans)];
 
     let header = Paragraph::new(lines).block(
         Block::default()
@@ -1125,7 +1191,19 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     let sep_style = Style::default().fg(Color::DarkGray);
     let input_style = Style::default().fg(Color::Yellow);
 
-    let spans = if app.operator_command_mode {
+    let spans = if app.detail_view_active {
+        // Detail view footer
+        vec![
+            Span::styled(" Esc:", label_style),
+            Span::styled("back ", key_style),
+            Span::styled("j/k:", label_style),
+            Span::styled("scroll ", key_style),
+            Span::styled("g:", label_style),
+            Span::styled("top ", key_style),
+            Span::styled("G:", label_style),
+            Span::styled("bottom", key_style),
+        ]
+    } else if app.operator_command_mode {
         // Show command input
         vec![
             Span::styled(" :", key_style),
@@ -1612,41 +1690,55 @@ fn row_counts(app: &App) -> (usize, usize) {
     }
 }
 
-/// Popup overlay — same style as dashboard theme.
-fn draw_popup(frame: &mut Frame, app: &App) {
-    let area = frame.area();
-
-    let popup_width = (area.width as u32 * 60 / 100) as u16;
-    let popup_height = (area.height as u32 * 70 / 100) as u16;
-    let x = (area.width.saturating_sub(popup_width)) / 2;
-    let y = (area.height.saturating_sub(popup_height)) / 2;
-
-    let popup_area = Rect::new(x, y, popup_width, popup_height);
-
-    frame.render_widget(Clear, popup_area);
+/// Inline detail view — replaces the table entirely (K9s-style).
+fn draw_detail_view(frame: &mut Frame, area: Rect, app: &App) {
+    let dim = Style::default().fg(Color::DarkGray);
+    let cyan = Style::default().fg(Color::Cyan);
+    let white = Style::default().fg(Color::White);
 
     let block = Block::default()
-        .title(format!(" {} ", app.popup_title))
-        .title_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
+        .title(format!(" {} ", app.detail_view_title))
+        .title_style(cyan.add_modifier(Modifier::BOLD))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
     let content_lines: Vec<Line> = app
-        .popup_content
+        .detail_view_content
         .iter()
-        .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(Color::White))))
+        .map(|line| {
+            if line.is_empty() {
+                Line::from("")
+            } else if line.ends_with(':')
+                && line
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false)
+            {
+                // Section header (e.g. "Connected Containers:")
+                Line::from(Span::styled(
+                    line.clone(),
+                    cyan.add_modifier(Modifier::BOLD),
+                ))
+            } else if let Some(colon_pos) = line.find(':') {
+                // Key-value line: key in dim, value in white
+                let (key, val) = line.split_at(colon_pos + 1);
+                Line::from(vec![
+                    Span::styled(key.to_string(), dim),
+                    Span::styled(val.to_string(), white),
+                ])
+            } else {
+                Line::from(Span::styled(line.clone(), white))
+            }
+        })
         .collect();
 
     let paragraph = Paragraph::new(content_lines)
         .block(block)
         .wrap(Wrap { trim: false })
-        .scroll((app.popup_scroll, 0));
+        .scroll((app.detail_view_scroll, 0));
 
-    frame.render_widget(paragraph, popup_area);
+    frame.render_widget(paragraph, area);
 }
 
 fn state_color(state: &str) -> Color {
