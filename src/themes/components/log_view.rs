@@ -3,21 +3,22 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::app::App;
 
 /// Shared log viewer component — renders color-coded, scrollable container logs.
-/// Used by both operator and dashboard themes.
+/// Supports vertical + horizontal scrolling and a wrap toggle.
 pub fn draw_log_view(frame: &mut Frame, area: Rect, app: &App) {
-    // Clear the area first to prevent previous frame content from bleeding through
+    // Clear previous frame content
     frame.render_widget(Clear, area);
 
     let follow_indicator = if app.log_view_follow { " [FOLLOW]" } else { "" };
+    let wrap_indicator = if app.log_view_wrap { " [WRAP]" } else { "" };
     let title = format!(
-        " Logs: {} {} ",
-        app.log_view_container_name, follow_indicator
+        " Logs: {}{}{} ",
+        app.log_view_container_name, follow_indicator, wrap_indicator
     );
 
     let block = Block::default()
@@ -53,15 +54,25 @@ pub fn draw_log_view(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let scroll = if app.log_view_follow {
+    let v_scroll = if app.log_view_follow {
         styled_lines.len().saturating_sub(inner_height) as u16
     } else {
         app.log_view_scroll
     };
 
-    let paragraph = Paragraph::new(styled_lines)
+    let h_scroll = if app.log_view_wrap {
+        0 // no horizontal scroll when wrapping
+    } else {
+        app.log_view_h_scroll
+    };
+
+    let mut paragraph = Paragraph::new(styled_lines)
         .block(block)
-        .scroll((scroll, 0));
+        .scroll((v_scroll, h_scroll));
+
+    if app.log_view_wrap {
+        paragraph = paragraph.wrap(Wrap { trim: false });
+    }
 
     frame.render_widget(paragraph, area);
 }

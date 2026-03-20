@@ -93,6 +93,27 @@ pub(super) fn operator_handle_key(
                 app.log_view_scroll = app.log_view_scroll.saturating_sub(20);
                 ThemeAction::Consumed
             }
+            // Horizontal scroll
+            KeyCode::Right | KeyCode::Char('l') => {
+                if !app.log_view_wrap {
+                    app.log_view_h_scroll = app.log_view_h_scroll.saturating_add(4);
+                }
+                ThemeAction::Consumed
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                app.log_view_h_scroll = app.log_view_h_scroll.saturating_sub(4);
+                ThemeAction::Consumed
+            }
+            KeyCode::Home => {
+                app.log_view_h_scroll = 0;
+                ThemeAction::Consumed
+            }
+            // Wrap toggle
+            KeyCode::Char('w') => {
+                app.log_view_wrap = !app.log_view_wrap;
+                app.log_view_h_scroll = 0;
+                ThemeAction::Consumed
+            }
             KeyCode::Char(':') => {
                 app.operator_command_mode = true;
                 app.operator_command_input.clear();

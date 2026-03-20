@@ -302,7 +302,9 @@ pub struct App {
     pub log_view_container_name: String,
     pub log_view_lines: Vec<String>,
     pub log_view_scroll: u16,
-    pub log_view_follow: bool, // auto-scroll + refresh on tick
+    pub log_view_h_scroll: u16, // horizontal scroll offset
+    pub log_view_follow: bool,  // auto-scroll + refresh on tick
+    pub log_view_wrap: bool,    // text wrap toggle
 
     // Lifecycle
     pub should_quit: bool,
@@ -377,7 +379,9 @@ impl App {
             log_view_container_name: String::new(),
             log_view_lines: Vec::new(),
             log_view_scroll: 0,
+            log_view_h_scroll: 0,
             log_view_follow: false,
+            log_view_wrap: false,
 
             should_quit: false,
         }
@@ -453,8 +457,9 @@ impl App {
         self.log_view_container_id = container_id;
         self.log_view_container_name = container_name;
         self.log_view_follow = true;
+        self.log_view_wrap = false;
+        self.log_view_h_scroll = 0;
         self.log_view_lines = lines;
-        // Auto-scroll to bottom
         self.log_view_scroll = self.log_view_lines.len().saturating_sub(1) as u16;
     }
 
@@ -465,7 +470,9 @@ impl App {
         self.log_view_container_name.clear();
         self.log_view_lines.clear();
         self.log_view_scroll = 0;
+        self.log_view_h_scroll = 0;
         self.log_view_follow = false;
+        self.log_view_wrap = false;
     }
 
     // ------------------------------------------------------------------

@@ -321,6 +321,27 @@ fn dashboard_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) ->
                 app.log_view_scroll = app.log_view_scroll.saturating_sub(20);
                 ThemeAction::Consumed
             }
+            // Horizontal scroll
+            KeyCode::Right | KeyCode::Char('l') => {
+                if !app.log_view_wrap {
+                    app.log_view_h_scroll = app.log_view_h_scroll.saturating_add(4);
+                }
+                ThemeAction::Consumed
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                app.log_view_h_scroll = app.log_view_h_scroll.saturating_sub(4);
+                ThemeAction::Consumed
+            }
+            KeyCode::Home => {
+                app.log_view_h_scroll = 0;
+                ThemeAction::Consumed
+            }
+            // Wrap toggle
+            KeyCode::Char('w') => {
+                app.log_view_wrap = !app.log_view_wrap;
+                app.log_view_h_scroll = 0;
+                ThemeAction::Consumed
+            }
             _ => ThemeAction::Consumed,
         };
     }
