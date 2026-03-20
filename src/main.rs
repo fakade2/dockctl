@@ -146,30 +146,64 @@ async fn main() -> Result<()> {
 
                 // ── Log view mode — same for all themes ──────────────────
                 if app.log_view_active {
+                    let max_scroll = app.log_view_lines.len().saturating_sub(1) as u16;
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => app.close_log_view(),
                         KeyCode::Char('f') => {
                             app.log_view_follow = !app.log_view_follow;
                             if app.log_view_follow {
-                                app.log_view_scroll =
-                                    app.log_view_lines.len().saturating_sub(1) as u16;
+                                app.log_view_scroll = max_scroll;
                             }
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
                             app.log_view_follow = false;
-                            app.log_view_scroll = app.log_view_scroll.saturating_add(1);
+                            app.log_view_scroll =
+                                app.log_view_scroll.saturating_add(1).min(max_scroll);
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
                             app.log_view_follow = false;
                             app.log_view_scroll = app.log_view_scroll.saturating_sub(1);
                         }
+                        // g = top, G = bottom (follow)
                         KeyCode::Char('g') => {
                             app.log_view_follow = false;
                             app.log_view_scroll = 0;
                         }
                         KeyCode::Char('G') => {
                             app.log_view_follow = true;
-                            app.log_view_scroll = app.log_view_lines.len().saturating_sub(1) as u16;
+                            app.log_view_scroll = max_scroll;
+                        }
+                        // Number keys: tail N lines (like K9s)
+                        // 0 = all (500), 1 = 50, 2 = 100, 3 = 200, 4 = 500, 5 = 1000
+                        KeyCode::Char(n @ '0'..='5') => {
+                            let tail_count = match n {
+                                '0' => 500,
+                                '1' => 50,
+                                '2' => 100,
+                                '3' => 200,
+                                '4' => 500,
+                                '5' => 1000,
+                                _ => 500,
+                            };
+                            let id = app.log_view_container_id.clone();
+                            if let Ok(logs) = container_svc.get_logs(&id, Some(tail_count)).await {
+                                app.log_view_lines = logs.lines().map(String::from).collect();
+                                app.log_view_scroll = if app.log_view_follow {
+                                    app.log_view_lines.len().saturating_sub(1) as u16
+                                } else {
+                                    0
+                                };
+                            }
+                        }
+                        // Page down / Page up
+                        KeyCode::PageDown => {
+                            app.log_view_follow = false;
+                            app.log_view_scroll =
+                                app.log_view_scroll.saturating_add(20).min(max_scroll);
+                        }
+                        KeyCode::PageUp => {
+                            app.log_view_follow = false;
+                            app.log_view_scroll = app.log_view_scroll.saturating_sub(20);
                         }
                         _ => {}
                     }

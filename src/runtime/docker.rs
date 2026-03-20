@@ -389,7 +389,8 @@ impl ContainerRuntime for DockerRuntime {
             .await
             .with_context(|| format!("failed to fetch logs for container {id}"))?
             .into_iter()
-            .map(|output| output.to_string())
+            .map(|output| output.to_string().trim_end().to_string())
+            .filter(|s| !s.is_empty())
             .collect();
 
         Ok(lines.join("\n"))

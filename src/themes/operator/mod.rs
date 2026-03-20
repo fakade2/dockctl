@@ -1254,9 +1254,11 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled("j/k", key_style),
             Span::styled(":scroll ", label_style),
             Span::styled("g", key_style),
-            Span::styled(":top ", label_style),
+            Span::styled("/", label_style),
             Span::styled("G", key_style),
-            Span::styled(":bottom ", label_style),
+            Span::styled(":top/end ", label_style),
+            Span::styled("0-5", key_style),
+            Span::styled(":tail(50-1k) ", label_style),
         ]
     } else if app.detail_view_active {
         vec![
