@@ -69,7 +69,98 @@ fn current_columns<'a>(app: &App, config: &'a DockctlConfig) -> &'a [String] {
 }
 
 fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> ThemeAction {
-    // Note: log_view key handling is in main.rs (engine layer, theme-agnostic)
+    // ── Popup mode ─────────────────────────────────────────────────
+    if app.show_popup {
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => {
+                app.close_popup();
+                return ThemeAction::Consumed;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                app.popup_scroll = app.popup_scroll.saturating_add(1);
+                return ThemeAction::Consumed;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                app.popup_scroll = app.popup_scroll.saturating_sub(1);
+                return ThemeAction::Consumed;
+            }
+            _ => return ThemeAction::Consumed,
+        }
+    }
+
+    // ── Log view mode ──────────────────────────────────────────────
+    if app.log_view_active {
+        let max_scroll = app.log_view_lines.len().saturating_sub(1) as u16;
+        return match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.close_log_view();
+                ThemeAction::Consumed
+            }
+            KeyCode::Char('f') => {
+                app.log_view_follow = !app.log_view_follow;
+                if app.log_view_follow {
+                    app.log_view_scroll = max_scroll;
+                }
+                ThemeAction::Consumed
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.log_view_follow = false;
+                app.log_view_scroll = app.log_view_scroll.saturating_add(1).min(max_scroll);
+                ThemeAction::Consumed
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.log_view_follow = false;
+                app.log_view_scroll = app.log_view_scroll.saturating_sub(1);
+                ThemeAction::Consumed
+            }
+            KeyCode::Char('g') => {
+                app.log_view_follow = false;
+                app.log_view_scroll = 0;
+                ThemeAction::Consumed
+            }
+            KeyCode::Char('G') => {
+                app.log_view_follow = true;
+                app.log_view_scroll = max_scroll;
+                ThemeAction::Consumed
+            }
+            KeyCode::Char(n @ '0'..='5') => {
+                let tail = match n {
+                    '0' => 500,
+                    '1' => 50,
+                    '2' => 100,
+                    '3' => 200,
+                    '4' => 500,
+                    '5' => 1000,
+                    _ => 500,
+                };
+                ThemeAction::RefreshLogs {
+                    id: app.log_view_container_id.clone(),
+                    tail,
+                }
+            }
+            KeyCode::PageDown => {
+                app.log_view_follow = false;
+                app.log_view_scroll = app.log_view_scroll.saturating_add(20).min(max_scroll);
+                ThemeAction::Consumed
+            }
+            KeyCode::PageUp => {
+                app.log_view_follow = false;
+                app.log_view_scroll = app.log_view_scroll.saturating_sub(20);
+                ThemeAction::Consumed
+            }
+            KeyCode::Char(':') => {
+                app.operator_command_mode = true;
+                app.operator_command_input.clear();
+                ThemeAction::Consumed
+            }
+            KeyCode::Char('/') => {
+                app.operator_filter_active = true;
+                app.operator_filter.clear();
+                ThemeAction::Consumed
+            }
+            _ => ThemeAction::Consumed,
+        };
+    }
 
     // Detail view mode — full-screen scrollable text, handle keys first
     if app.detail_view_active {
@@ -198,8 +289,8 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
             ThemeAction::Consumed
         }
 
-        // Explain / Enter — open detail popup
-        (KeyCode::Char('e') | KeyCode::Enter, _) => ThemeAction::NotHandled,
+        // Explain / Enter — open inline detail view
+        (KeyCode::Char('e') | KeyCode::Enter, _) => ThemeAction::ExplainItem { use_inline: true },
 
         // Wide mode toggle
         (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
@@ -257,7 +348,53 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
             ThemeAction::Consumed
         }
 
-        // Container actions — pass to main loop
+        // ── Container actions (only when viewing containers) ─────
+        (KeyCode::Char('s'), _) if app.operator_resource == "containers" => {
+            if let Some(id) = app.selected_container_id() {
+                ThemeAction::StopContainer { id }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('r'), _) if app.operator_resource == "containers" => {
+            if let Some(id) = app.selected_container_id() {
+                ThemeAction::RestartContainer { id }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('x'), _) if app.operator_resource == "containers" => {
+            if let Some(id) = app.selected_container_id() {
+                ThemeAction::RemoveContainer { id }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('l'), _) if app.operator_resource == "containers" => {
+            if let Some(id) = app.selected_container_id() {
+                let name = app
+                    .containers
+                    .get(app.selected_index())
+                    .map(|c| crate::ui::container_display_name(&c.names))
+                    .unwrap_or_default();
+                ThemeAction::FetchLogs {
+                    id,
+                    name,
+                    tail: 500,
+                }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('E'), _) if app.operator_resource == "containers" => {
+            if let Some(id) = app.selected_container_id() {
+                ThemeAction::ExecContainer { id }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+
+        // Everything else — not handled
         _ => ThemeAction::NotHandled,
     }
 }

@@ -11,12 +11,32 @@ use crate::config::DockctlConfig;
 pub enum ThemeAction {
     /// Key was consumed by the theme.
     Consumed,
-    /// Key was not handled — pass to global handler.
+    /// Key was not handled by the theme — engine ignores it.
     NotHandled,
     /// Theme wants to quit.
     Quit,
     /// Theme wants to open explain popup with these lines.
     OpenPopup { title: String, content: Vec<String> },
+    /// Theme wants to fetch logs for a container.
+    FetchLogs {
+        id: String,
+        name: String,
+        tail: usize,
+    },
+    /// Theme wants to fetch detailed inspect data for a container.
+    FetchDetail { id: String },
+    /// Theme wants to refresh logs with a different tail count (number keys).
+    RefreshLogs { id: String, tail: usize },
+    /// Theme wants to stop a container.
+    StopContainer { id: String },
+    /// Theme wants to restart a container.
+    RestartContainer { id: String },
+    /// Theme wants to remove a container.
+    RemoveContainer { id: String },
+    /// Theme wants to exec into a container via tmux.
+    ExecContainer { id: String },
+    /// Theme wants to open the explain/detail view for the current selection.
+    ExplainItem { use_inline: bool },
 }
 
 /// Trait that all themes must implement.

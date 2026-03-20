@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 
-use crate::app::{App, PanelId};
+use crate::app::{App, InputMode, PanelId};
 use crate::config::DockctlConfig;
 use crate::themes::{Theme, ThemeAction};
 
@@ -36,9 +36,144 @@ impl Theme for DashboardTheme {
 
 /// Dashboard-specific key handling.
 ///
-/// Handles navigation and UI-related keys. Container actions and async
-/// operations return `ThemeAction::NotHandled` so the main loop can handle them.
+/// Handles ALL key events: popup mode, log view, detail view, search mode,
+/// navigation, container actions, and explain. The engine only executes
+/// async ThemeAction results.
 fn dashboard_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> ThemeAction {
+    // ── Popup mode ─────────────────────────────────────────────────
+    if app.show_popup {
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => {
+                app.close_popup();
+                return ThemeAction::Consumed;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                app.popup_scroll = app.popup_scroll.saturating_add(1);
+                return ThemeAction::Consumed;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                app.popup_scroll = app.popup_scroll.saturating_sub(1);
+                return ThemeAction::Consumed;
+            }
+            _ => return ThemeAction::Consumed,
+        }
+    }
+
+    // ── Log view mode ──────────────────────────────────────────────
+    if app.log_view_active {
+        let max_scroll = app.log_view_lines.len().saturating_sub(1) as u16;
+        return match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.close_log_view();
+                ThemeAction::Consumed
+            }
+            KeyCode::Char('f') => {
+                app.log_view_follow = !app.log_view_follow;
+                if app.log_view_follow {
+                    app.log_view_scroll = max_scroll;
+                }
+                ThemeAction::Consumed
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.log_view_follow = false;
+                app.log_view_scroll = app.log_view_scroll.saturating_add(1).min(max_scroll);
+                ThemeAction::Consumed
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.log_view_follow = false;
+                app.log_view_scroll = app.log_view_scroll.saturating_sub(1);
+                ThemeAction::Consumed
+            }
+            KeyCode::Char('g') => {
+                app.log_view_follow = false;
+                app.log_view_scroll = 0;
+                ThemeAction::Consumed
+            }
+            KeyCode::Char('G') => {
+                app.log_view_follow = true;
+                app.log_view_scroll = max_scroll;
+                ThemeAction::Consumed
+            }
+            KeyCode::Char(n @ '0'..='5') => {
+                let tail = match n {
+                    '0' => 500,
+                    '1' => 50,
+                    '2' => 100,
+                    '3' => 200,
+                    '4' => 500,
+                    '5' => 1000,
+                    _ => 500,
+                };
+                ThemeAction::RefreshLogs {
+                    id: app.log_view_container_id.clone(),
+                    tail,
+                }
+            }
+            KeyCode::PageDown => {
+                app.log_view_follow = false;
+                app.log_view_scroll = app.log_view_scroll.saturating_add(20).min(max_scroll);
+                ThemeAction::Consumed
+            }
+            KeyCode::PageUp => {
+                app.log_view_follow = false;
+                app.log_view_scroll = app.log_view_scroll.saturating_sub(20);
+                ThemeAction::Consumed
+            }
+            _ => ThemeAction::Consumed,
+        };
+    }
+
+    // ── Detail view mode ───────────────────────────────────────────
+    if app.detail_view_active {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.close_detail_view();
+                return ThemeAction::Consumed;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.detail_view_scroll = app.detail_view_scroll.saturating_add(1);
+                return ThemeAction::Consumed;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.detail_view_scroll = app.detail_view_scroll.saturating_sub(1);
+                return ThemeAction::Consumed;
+            }
+            KeyCode::Char('g') => {
+                app.detail_view_scroll = 0;
+                return ThemeAction::Consumed;
+            }
+            KeyCode::Char('G') => {
+                app.detail_view_scroll = app.detail_view_content.len().saturating_sub(1) as u16;
+                return ThemeAction::Consumed;
+            }
+            _ => return ThemeAction::Consumed,
+        }
+    }
+
+    // ── Search mode ────────────────────────────────────────────────
+    if app.input_mode == InputMode::Search {
+        match key.code {
+            KeyCode::Esc => {
+                app.input_mode = InputMode::Normal;
+                app.search_query.clear();
+            }
+            KeyCode::Enter => {
+                app.input_mode = InputMode::Normal;
+            }
+            KeyCode::Backspace => {
+                app.search_query.pop();
+            }
+            KeyCode::Char(c) => {
+                app.search_query.push(c);
+            }
+            _ => {}
+        }
+        return ThemeAction::Consumed;
+    }
+
+    // ── Normal mode ────────────────────────────────────────────────
+    let is_container_context = app.active_panel == PanelId::Containers;
+
     match (key.code, key.modifiers) {
         // Quit
         (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => ThemeAction::Quit,
@@ -73,19 +208,26 @@ fn dashboard_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) ->
         }
 
         // Horizontal column scrolling (right panels only)
-        (KeyCode::Right | KeyCode::Char('l'), _) if app.active_panel.is_right() => {
-            let max_cols = match app.active_panel {
-                PanelId::Containers => config.columns.containers.len(),
-                PanelId::Images => config.columns.images.len(),
-                PanelId::Volumes => config.columns.volumes.len(),
-                PanelId::Networks => config.columns.networks.len(),
-                _ => 0,
-            };
+        // Note: 'l' is also logs for containers, so only scroll columns for non-container right panels
+        (KeyCode::Right, _) if app.active_panel.is_right() => {
+            let max_cols = dashboard_max_cols(app, config);
+            app.scroll_columns_right(max_cols);
+            ThemeAction::Consumed
+        }
+        (KeyCode::Char('l'), _) if app.active_panel.is_right() && !is_container_context => {
+            let max_cols = dashboard_max_cols(app, config);
             app.scroll_columns_right(max_cols);
             ThemeAction::Consumed
         }
         (KeyCode::Left | KeyCode::Char('h'), _) if app.active_panel.is_right() => {
             app.scroll_columns_left();
+            ThemeAction::Consumed
+        }
+
+        // Search
+        (KeyCode::Char('/'), _) => {
+            app.input_mode = InputMode::Search;
+            app.search_query.clear();
             ThemeAction::Consumed
         }
 
@@ -97,14 +239,73 @@ fn dashboard_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) ->
             ThemeAction::Consumed
         }
 
+        // Explain / Enter — open detail popup
+        (KeyCode::Char('e') | KeyCode::Enter, _) => ThemeAction::ExplainItem { use_inline: false },
+
         // Keybindings help
         (KeyCode::Char('?'), _) => ThemeAction::OpenPopup {
             title: "Keybindings".to_string(),
             content: dashboard_help_lines(),
         },
 
-        // Everything else — not handled (main loop processes container actions, explain, search, etc.)
+        // ── Container actions (only when container panel is active) ─────
+        (KeyCode::Char('s'), _) if is_container_context => {
+            if let Some(id) = app.selected_container_id() {
+                ThemeAction::StopContainer { id }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('r'), _) if is_container_context => {
+            if let Some(id) = app.selected_container_id() {
+                ThemeAction::RestartContainer { id }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('x'), _) if is_container_context => {
+            if let Some(id) = app.selected_container_id() {
+                ThemeAction::RemoveContainer { id }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('l'), _) if is_container_context => {
+            if let Some(id) = app.selected_container_id() {
+                let name = app
+                    .containers
+                    .get(app.selected_index())
+                    .map(|c| crate::ui::container_display_name(&c.names))
+                    .unwrap_or_default();
+                ThemeAction::FetchLogs {
+                    id,
+                    name,
+                    tail: 500,
+                }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('E'), _) if is_container_context => {
+            if let Some(id) = app.selected_container_id() {
+                ThemeAction::ExecContainer { id }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+
+        // Everything else — not handled
         _ => ThemeAction::NotHandled,
+    }
+}
+
+fn dashboard_max_cols(app: &App, config: &DockctlConfig) -> usize {
+    match app.active_panel {
+        PanelId::Containers => config.columns.containers.len(),
+        PanelId::Images => config.columns.images.len(),
+        PanelId::Volumes => config.columns.volumes.len(),
+        PanelId::Networks => config.columns.networks.len(),
+        _ => 0,
     }
 }
 
