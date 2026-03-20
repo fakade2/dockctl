@@ -28,7 +28,8 @@ jobs:
       - name: Check if tag exists
         id: check_tag
         run: |
-          if git ls-remote --tags origin | grep -q "refs/tags/v$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//' | sed 's/"//'))"; then
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//' | sed 's/"//')
+          if git ls-remote --tags origin | grep -q "refs/tags/v${VERSION}"; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
