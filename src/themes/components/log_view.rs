@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 
 use crate::app::App;
@@ -11,6 +11,9 @@ use crate::app::App;
 /// Shared log viewer component — renders color-coded, scrollable container logs.
 /// Used by both operator and dashboard themes.
 pub fn draw_log_view(frame: &mut Frame, area: Rect, app: &App) {
+    // Clear the area first to prevent previous frame content from bleeding through
+    frame.render_widget(Clear, area);
+
     let follow_indicator = if app.log_view_follow { " [FOLLOW]" } else { "" };
     let title = format!(
         " Logs: {} {} ",

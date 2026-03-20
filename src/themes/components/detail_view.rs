@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::app::App;
@@ -11,6 +11,8 @@ use crate::app::App;
 /// Shared detail view component — renders scrollable key-value content.
 /// Used by both operator and dashboard themes.
 pub fn draw_detail_view(frame: &mut Frame, area: Rect, app: &App) {
+    frame.render_widget(Clear, area);
+
     let dim = Style::default().fg(Color::DarkGray);
     let cyan = Style::default().fg(Color::Cyan);
     let white = Style::default().fg(Color::White);
