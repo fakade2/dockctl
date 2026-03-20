@@ -12,9 +12,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::Paragraph,
 };
 
 use crate::app::{App, InputMode, PanelId};
@@ -107,9 +107,9 @@ fn draw(frame: &mut Frame, app: &App, config: &DockctlConfig) {
 
     // 4. Right column: log view, detail view, or accordion
     if app.log_view_active {
-        draw_log_view(frame, right_area, app);
+        super::components::draw_log_view(frame, right_area, app);
     } else if app.detail_view_active {
-        draw_detail_view(frame, right_area, app);
+        super::components::draw_detail_view(frame, right_area, app);
     } else {
         draw_right_accordion(frame, right_area, app, config);
     }
@@ -119,7 +119,7 @@ fn draw(frame: &mut Frame, app: &App, config: &DockctlConfig) {
 
     // 6. Popup overlay (if open)
     if app.show_popup {
-        draw_popup(frame, app);
+        super::components::draw_popup(frame, app);
     }
 }
 
@@ -231,125 +231,6 @@ fn draw_status_bar(frame: &mut Frame, area: Rect) {
     let line = Line::from(spans);
     let bar = Paragraph::new(line);
     frame.render_widget(bar, area);
-}
-
-/// Renders the log viewer (shared across themes).
-fn draw_log_view(frame: &mut Frame, area: Rect, app: &App) {
-    let follow_indicator = if app.log_view_follow { " [FOLLOW]" } else { "" };
-    let title = format!(
-        " Logs: {} {} ",
-        app.log_view_container_name, follow_indicator
-    );
-
-    let block = Block::default()
-        .title(title)
-        .title_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
-
-    let inner = block.inner(area);
-    let inner_height = inner.height as usize;
-
-    let styled_lines: Vec<Line> = app
-        .log_view_lines
-        .iter()
-        .map(|line| {
-            let style =
-                if line.contains("ERROR") || line.contains("FATAL") || line.contains("PANIC") {
-                    Style::default().fg(Color::Red)
-                } else if line.contains("WARN") {
-                    Style::default().fg(Color::Yellow)
-                } else if line.contains("INFO") {
-                    Style::default().fg(Color::Green)
-                } else if line.contains("DEBUG") || line.contains("TRACE") {
-                    Style::default().fg(Color::DarkGray)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-            Line::from(Span::styled(line.as_str(), style))
-        })
-        .collect();
-
-    let scroll = if app.log_view_follow {
-        styled_lines.len().saturating_sub(inner_height) as u16
-    } else {
-        app.log_view_scroll
-    };
-
-    let paragraph = Paragraph::new(styled_lines)
-        .block(block)
-        .scroll((scroll, 0));
-
-    frame.render_widget(paragraph, area);
-}
-
-/// Renders the inline detail view (shared across themes).
-fn draw_detail_view(frame: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .title(format!(" {} ", app.detail_view_title))
-        .title_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
-
-    let content_lines: Vec<Line> = app
-        .detail_view_content
-        .iter()
-        .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(Color::White))))
-        .collect();
-
-    let paragraph = Paragraph::new(content_lines)
-        .block(block)
-        .wrap(Wrap { trim: false })
-        .scroll((app.detail_view_scroll, 0));
-
-    frame.render_widget(paragraph, area);
-}
-
-/// Renders the popup overlay centered on the screen.
-fn draw_popup(frame: &mut Frame, app: &App) {
-    let area = frame.area();
-
-    // 60% width, 70% height, centered
-    let popup_width = (area.width as u32 * 60 / 100) as u16;
-    let popup_height = (area.height as u32 * 70 / 100) as u16;
-    let x = (area.width.saturating_sub(popup_width)) / 2;
-    let y = (area.height.saturating_sub(popup_height)) / 2;
-
-    let popup_area = Rect::new(x, y, popup_width, popup_height);
-
-    // Clear the area behind the popup
-    frame.render_widget(Clear, popup_area);
-
-    let block = Block::default()
-        .title(format!(" {} ", app.popup_title))
-        .title_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
-
-    let content_lines: Vec<Line> = app
-        .popup_content
-        .iter()
-        .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(Color::White))))
-        .collect();
-
-    let paragraph = Paragraph::new(content_lines)
-        .block(block)
-        .wrap(Wrap { trim: false })
-        .scroll((app.popup_scroll, 0));
-
-    frame.render_widget(paragraph, popup_area);
 }
 
 // ─── Key handling ────────────────────────────────────────────────────────────
