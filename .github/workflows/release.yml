@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.github/workflows/ci.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Only create a release if version changed
+  check-version:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag_exists: ${{ steps.check_tag.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//' | sed 's/"//')
+          echo "version=v${VERSION}" >> "$GITHUB_OUTPUT"
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          if git ls-remote --tags origin | grep -q "refs/tags/v$(grep '^version' Cargo.toml | head -1 | sed 's/.*= *"//' | sed 's/"//'))"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: check-version
+    if: needs.check-version.outputs.tag_exists == 'false'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: dockctl-darwin-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: dockctl-darwin-amd64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: dockctl-linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary (Linux)
+        if: contains(matrix.target, 'linux')
+        run: strip target/${{ matrix.target }}/release/dockctl
+
+      - name: Strip binary (macOS)
+        if: contains(matrix.target, 'darwin')
+        run: strip target/${{ matrix.target }}/release/dockctl
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/dockctl dist/${{ matrix.name }}
+          chmod +x dist/${{ matrix.name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/${{ matrix.name }}
+
+  release:
+    name: Create Release
+    needs: [check-version, build]
+    if: needs.check-version.outputs.tag_exists == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+
+          # Generate checksums
+          cd dist
+          for dir in */; do
+            mv "$dir"/* . 2>/dev/null || true
+            rmdir "$dir" 2>/dev/null || true
+          done
+          sha256sum dockctl-* > checksums.txt
+          cd ..
+
+          # Create tag and release
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --generate-notes \
+            dist/dockctl-darwin-arm64 \
+            dist/dockctl-darwin-amd64 \
+            dist/dockctl-linux-amd64 \
+            dist/checksums.txt
