@@ -144,6 +144,39 @@ async fn main() -> Result<()> {
                     continue;
                 }
 
+                // ── Log view mode — same for all themes ──────────────────
+                if app.log_view_active {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => app.close_log_view(),
+                        KeyCode::Char('f') => {
+                            app.log_view_follow = !app.log_view_follow;
+                            if app.log_view_follow {
+                                app.log_view_scroll =
+                                    app.log_view_lines.len().saturating_sub(1) as u16;
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            app.log_view_follow = false;
+                            app.log_view_scroll = app.log_view_scroll.saturating_add(1);
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            app.log_view_follow = false;
+                            app.log_view_scroll = app.log_view_scroll.saturating_sub(1);
+                        }
+                        KeyCode::Char('g') => {
+                            app.log_view_follow = false;
+                            app.log_view_scroll = 0;
+                        }
+                        KeyCode::Char('G') => {
+                            app.log_view_follow = true;
+                            app.log_view_scroll =
+                                app.log_view_lines.len().saturating_sub(1) as u16;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // ── Search mode — same for all themes ───────────────────
                 if app.input_mode == InputMode::Search {
                     handle_search_input(&mut app, key.code);
@@ -220,7 +253,17 @@ async fn handle_global_key(
             }
         }
         KeyCode::Char('l') if is_container_context => {
-            // Reserved for logs
+            if let Some(id) = app.selected_container_id() {
+                let name = app
+                    .containers
+                    .get(app.selected_index())
+                    .map(|c| crate::ui::container_display_name(&c.names))
+                    .unwrap_or_default();
+                if let Ok(logs) = container_svc.get_logs(&id, Some(500)).await {
+                    let lines: Vec<String> = logs.lines().map(String::from).collect();
+                    app.open_log_view(id, name, lines);
+                }
+            }
         }
         KeyCode::Char('E') if is_container_context => {
             if let Some(id) = app.selected_container_id()
@@ -488,6 +531,18 @@ async fn load_panel_data(
                 app.networks = networks;
             }
         }
+    }
+
+    // Refresh logs if log view is active and follow mode is on
+    if app.log_view_active
+        && app.log_view_follow
+        && let Ok(logs) = container_svc
+            .get_logs(&app.log_view_container_id, Some(500))
+            .await
+    {
+        app.log_view_lines = logs.lines().map(String::from).collect();
+        // Auto-scroll to bottom in follow mode
+        app.log_view_scroll = app.log_view_lines.len().saturating_sub(1) as u16;
     }
 }
 

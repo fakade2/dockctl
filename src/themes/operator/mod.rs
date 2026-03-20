@@ -69,6 +69,8 @@ fn current_columns<'a>(app: &App, config: &'a DockctlConfig) -> &'a [String] {
 }
 
 fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> ThemeAction {
+    // Note: log_view key handling is in main.rs (engine layer, theme-agnostic)
+
     // Detail view mode — full-screen scrollable text, handle keys first
     if app.detail_view_active {
         match key.code {
@@ -504,7 +506,9 @@ fn draw_operator(frame: &mut Frame, app: &App, config: &DockctlConfig) {
     draw_header(frame, outer[0], app);
     draw_command_line(frame, outer[1], app);
 
-    if app.detail_view_active {
+    if app.log_view_active {
+        draw_log_view(frame, outer[2], app);
+    } else if app.detail_view_active {
         draw_detail_view(frame, outer[2], app);
     } else {
         draw_resource_table(frame, outer[2], app, config);
@@ -536,7 +540,20 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let stopped = app.containers.len() - running;
     let (_total, filtered) = row_counts(app);
 
-    let row1_left: Vec<Span> = if app.detail_view_active {
+    let row1_left: Vec<Span> = if app.log_view_active {
+        let follow_tag = if app.log_view_follow { " [FOLLOW]" } else { "" };
+        vec![
+            Span::styled(" dockctl", logo_style),
+            Span::raw("    "),
+            Span::styled("Docker", dim),
+            Span::styled(" \u{203a} ", dim),
+            Span::styled(resource_cap.clone(), white),
+            Span::styled(" \u{203a} ", dim),
+            Span::styled(app.log_view_container_name.clone(), white),
+            Span::styled(" \u{203a} ", dim),
+            Span::styled(format!("Logs{}", follow_tag), white),
+        ]
+    } else if app.detail_view_active {
         let detail_name = app
             .detail_view_title
             .split(": ")
@@ -685,6 +702,16 @@ fn draw_command_line(frame: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(Color::Yellow),
             ),
             Span::styled("\u{2588}", Style::default().fg(Color::Yellow)),
+        ])
+    } else if app.log_view_active {
+        let follow_tag = if app.log_view_follow { " [FOLLOW]" } else { "" };
+        Line::from(vec![
+            Span::styled(":logs ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                app.log_view_container_name.clone(),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(follow_tag.to_string(), Style::default().fg(Color::Green)),
         ])
     } else {
         let mut spans = vec![
@@ -1213,7 +1240,20 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     let key_style = Style::default().fg(Color::Cyan);
     let label_style = Style::default().fg(Color::DarkGray);
 
-    let shortcuts: Vec<Span> = if app.detail_view_active {
+    let shortcuts: Vec<Span> = if app.log_view_active {
+        vec![
+            Span::styled(" Esc", key_style),
+            Span::styled(":back ", label_style),
+            Span::styled("f", key_style),
+            Span::styled(":follow ", label_style),
+            Span::styled("j/k", key_style),
+            Span::styled(":scroll ", label_style),
+            Span::styled("g", key_style),
+            Span::styled(":top ", label_style),
+            Span::styled("G", key_style),
+            Span::styled(":bottom ", label_style),
+        ]
+    } else if app.detail_view_active {
         vec![
             Span::styled(" Esc", key_style),
             Span::styled(":back ", label_style),
@@ -1699,6 +1739,62 @@ fn row_counts(app: &App) -> (usize, usize) {
         }
         _ => (0, 0),
     }
+}
+
+/// Inline log viewer — replaces the table entirely, shows color-coded logs.
+fn draw_log_view(frame: &mut Frame, area: Rect, app: &App) {
+    let follow_indicator = if app.log_view_follow { " [FOLLOW]" } else { "" };
+    let title = format!(
+        " Logs: {} {} ",
+        app.log_view_container_name, follow_indicator
+    );
+
+    let block = Block::default()
+        .title(title)
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(area);
+    let inner_height = inner.height as usize;
+
+    // Color-code log lines by level
+    let styled_lines: Vec<Line> = app
+        .log_view_lines
+        .iter()
+        .map(|line| {
+            let style =
+                if line.contains("ERROR") || line.contains("FATAL") || line.contains("PANIC") {
+                    Style::default().fg(Color::Red)
+                } else if line.contains("WARN") {
+                    Style::default().fg(Color::Yellow)
+                } else if line.contains("INFO") {
+                    Style::default().fg(Color::Green)
+                } else if line.contains("DEBUG") || line.contains("TRACE") {
+                    Style::default().fg(Color::DarkGray)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+            Line::from(Span::styled(line.as_str(), style))
+        })
+        .collect();
+
+    // Calculate scroll — in follow mode, always show the bottom
+    let scroll = if app.log_view_follow {
+        styled_lines.len().saturating_sub(inner_height) as u16
+    } else {
+        app.log_view_scroll
+    };
+
+    let paragraph = Paragraph::new(styled_lines)
+        .block(block)
+        .scroll((scroll, 0));
+
+    frame.render_widget(paragraph, area);
 }
 
 /// Inline detail view — replaces the table entirely (K9s-style).
