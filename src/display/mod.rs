@@ -58,7 +58,7 @@ pub fn collapsed_panel_line(title: &str, number: u8, is_focused: bool) -> Line<'
         Span::styled("─", sep_style),
         Span::styled(format!(" [{}]", number), number_style),
         Span::styled(format!(" {} ", title), title_style),
-        Span::styled("─".repeat(40), sep_style),
+        Span::styled("───", sep_style),
     ])
 }
 

@@ -118,6 +118,7 @@ pub fn draw_container_panel(
             PanelId::Containers.number(),
             is_focused,
         ))
+        .column_spacing(1)
         .row_highlight_style(
             Style::default()
                 .bg(Color::DarkGray)
