@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Row, Table},
+    widgets::{Block, Borders, Cell, Clear, Row, Table},
 };
 
 use crate::app::{App, PanelId};
@@ -72,6 +72,7 @@ pub(super) fn draw_resource_table(
 }
 
 pub(super) fn draw_containers_table(frame: &mut Frame, area: Rect, app: &App, columns: &[String]) {
+    frame.render_widget(Clear, area);
     let selected = app.panel_selection(PanelId::Containers);
     let col_offset = app.panel_column_offset(PanelId::Containers);
     let filter = &app.operator_filter;
@@ -96,6 +97,9 @@ pub(super) fn draw_containers_table(frame: &mut Frame, area: Rect, app: &App, co
                 || c.state.to_lowercase().contains(&f)
         })
         .collect();
+
+    // Cap selection to filtered list bounds
+    let selected = selected.min(filtered.len().saturating_sub(1));
 
     let rows: Vec<Row> = filtered
         .iter()
@@ -197,6 +201,7 @@ pub(super) fn draw_containers_table(frame: &mut Frame, area: Rect, app: &App, co
 }
 
 pub(super) fn draw_images_table(frame: &mut Frame, area: Rect, app: &App, columns: &[String]) {
+    frame.render_widget(Clear, area);
     let selected = app.panel_selection(PanelId::Images);
     let col_offset = app.panel_column_offset(PanelId::Images);
     let filter = &app.operator_filter;
@@ -220,6 +225,9 @@ pub(super) fn draw_images_table(frame: &mut Frame, area: Rect, app: &App, column
                 || short_id(&img.id).contains(&f)
         })
         .collect();
+
+    // Cap selection to filtered list bounds
+    let selected = selected.min(filtered.len().saturating_sub(1));
 
     let rows: Vec<Row> = filtered
         .iter()
@@ -309,6 +317,7 @@ pub(super) fn draw_images_table(frame: &mut Frame, area: Rect, app: &App, column
 }
 
 pub(super) fn draw_volumes_table(frame: &mut Frame, area: Rect, app: &App, columns: &[String]) {
+    frame.render_widget(Clear, area);
     let selected = app.panel_selection(PanelId::Volumes);
     let col_offset = app.panel_column_offset(PanelId::Volumes);
     let filter = &app.operator_filter;
@@ -331,6 +340,9 @@ pub(super) fn draw_volumes_table(frame: &mut Frame, area: Rect, app: &App, colum
             vol.name.to_lowercase().contains(&f) || vol.driver.to_lowercase().contains(&f)
         })
         .collect();
+
+    // Cap selection to filtered list bounds
+    let selected = selected.min(filtered.len().saturating_sub(1));
 
     // Volumes: all get a blue dot
     let vol_dot = "\u{25cf}";
@@ -593,6 +605,7 @@ pub(super) fn draw_compose_table(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 pub(super) fn draw_networks_table(frame: &mut Frame, area: Rect, app: &App, columns: &[String]) {
+    frame.render_widget(Clear, area);
     let selected = app.panel_selection(PanelId::Networks);
     let col_offset = app.panel_column_offset(PanelId::Networks);
     let filter = &app.operator_filter;
@@ -615,6 +628,9 @@ pub(super) fn draw_networks_table(frame: &mut Frame, area: Rect, app: &App, colu
             net.name.to_lowercase().contains(&f) || net.driver.to_lowercase().contains(&f)
         })
         .collect();
+
+    // Cap selection to filtered list bounds
+    let selected = selected.min(filtered.len().saturating_sub(1));
 
     let rows: Vec<Row> = filtered
         .iter()

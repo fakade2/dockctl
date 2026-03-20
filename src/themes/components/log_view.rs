@@ -57,7 +57,9 @@ pub fn draw_log_view(frame: &mut Frame, area: Rect, app: &App) {
     let v_scroll = if app.log_view_follow {
         styled_lines.len().saturating_sub(inner_height) as u16
     } else {
+        // Cap manual scroll to prevent scrolling past content
         app.log_view_scroll
+            .min(styled_lines.len().saturating_sub(inner_height) as u16)
     };
 
     let h_scroll = if app.log_view_wrap {

@@ -33,6 +33,7 @@ pub fn draw_container_panel(
     };
 
     if !is_expanded {
+        frame.render_widget(ratatui::widgets::Clear, area);
         let line = collapsed_panel_line(&title, PanelId::Containers.number(), is_focused);
         frame.render_widget(Paragraph::new(line), area);
         return;

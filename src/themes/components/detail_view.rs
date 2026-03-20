@@ -23,6 +23,9 @@ pub fn draw_detail_view(frame: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
+    let inner = block.inner(area);
+    let inner_height = inner.height as usize;
+
     let content_lines: Vec<Line> = app
         .detail_view_content
         .iter()
@@ -54,10 +57,13 @@ pub fn draw_detail_view(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
+    let max_scroll = content_lines.len().saturating_sub(inner_height) as u16;
+    let capped_scroll = app.detail_view_scroll.min(max_scroll);
+
     let paragraph = Paragraph::new(content_lines)
         .block(block)
         .wrap(Wrap { trim: false })
-        .scroll((app.detail_view_scroll, 0));
+        .scroll((capped_scroll, 0));
 
     frame.render_widget(paragraph, area);
 }

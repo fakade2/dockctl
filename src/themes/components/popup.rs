@@ -32,16 +32,22 @@ pub fn draw_popup(frame: &mut Frame, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
+    let inner = block.inner(popup_area);
+    let inner_height = inner.height as usize;
+
     let content_lines: Vec<Line> = app
         .popup_content
         .iter()
         .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(Color::White))))
         .collect();
 
+    let max_scroll = content_lines.len().saturating_sub(inner_height) as u16;
+    let capped_scroll = app.popup_scroll.min(max_scroll);
+
     let paragraph = Paragraph::new(content_lines)
         .block(block)
         .wrap(Wrap { trim: false })
-        .scroll((app.popup_scroll, 0));
+        .scroll((capped_scroll, 0));
 
     frame.render_widget(paragraph, popup_area);
 }
