@@ -4,6 +4,7 @@ use crate::themes::ThemeAction;
 /// All available commands for autocomplete.
 pub(super) const COMMANDS: &[&str] = &[
     "containers",
+    "compose",
     "images",
     "volumes",
     "networks",
@@ -53,12 +54,19 @@ pub(super) fn execute_command(app: &mut App, cmd: &str) -> ThemeAction {
 
 /// Fuzzy match a command input to a resource name.
 pub(super) fn fuzzy_match_resource(input: &str) -> Option<&'static str> {
-    let resources = ["containers", "images", "volumes", "networks", "status"];
+    let resources = [
+        "compose",
+        "containers",
+        "images",
+        "volumes",
+        "networks",
+        "status",
+    ];
     // Exact match first
     if let Some(r) = resources.iter().find(|&&r| r == input) {
         return Some(r);
     }
-    // Prefix match
+    // Prefix match (skip "compose" for single-char "c" to avoid ambiguity)
     let matches: Vec<&&str> = resources
         .iter()
         .filter(|&&r| r.starts_with(input))
@@ -68,6 +76,7 @@ pub(super) fn fuzzy_match_resource(input: &str) -> Option<&'static str> {
     }
     // Common abbreviations
     match input {
+        "comp" | "dc" => Some("compose"),
         "con" | "cnt" | "c" => Some("containers"),
         "img" | "im" | "i" => Some("images"),
         "vol" | "v" => Some("volumes"),
@@ -167,5 +176,27 @@ mod tests {
         let result = execute_command(&mut app, "nonexistent");
         assert!(matches!(result, ThemeAction::Consumed));
         assert_eq!(app.operator_resource, original); // unchanged
+    }
+
+    #[test]
+    fn fuzzy_match_compose() {
+        assert_eq!(fuzzy_match_resource("compose"), Some("compose"));
+        assert_eq!(fuzzy_match_resource("comp"), Some("compose"));
+        assert_eq!(fuzzy_match_resource("dc"), Some("compose"));
+    }
+
+    #[test]
+    fn execute_command_switch_to_compose() {
+        let mut app = crate::app::App::new(false);
+        let result = execute_command(&mut app, "compose");
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert_eq!(app.operator_resource, "compose");
+    }
+
+    #[test]
+    fn autocomplete_compose() {
+        assert_eq!(autocomplete_suggestion("comp"), Some("compose"));
+        assert_eq!(autocomplete_suggestion("compo"), Some("compose"));
+        assert_eq!(autocomplete_suggestion("compose"), Some("compose"));
     }
 }

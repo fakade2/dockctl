@@ -196,6 +196,36 @@ async fn main() -> Result<()> {
                     ThemeAction::ExplainItem { use_inline } => {
                         open_explain(&mut app, &container_svc, use_inline).await;
                     }
+                    ThemeAction::ComposeUp { working_dir } => {
+                        if let Err(e) = tokio::process::Command::new("docker")
+                            .args(["compose", "up", "-d"])
+                            .current_dir(&working_dir)
+                            .output()
+                            .await
+                        {
+                            tracing::warn!("Failed to compose up: {}", e);
+                        }
+                    }
+                    ThemeAction::ComposeDown { working_dir } => {
+                        if let Err(e) = tokio::process::Command::new("docker")
+                            .args(["compose", "down"])
+                            .current_dir(&working_dir)
+                            .output()
+                            .await
+                        {
+                            tracing::warn!("Failed to compose down: {}", e);
+                        }
+                    }
+                    ThemeAction::ComposeRestart { working_dir } => {
+                        if let Err(e) = tokio::process::Command::new("docker")
+                            .args(["compose", "restart"])
+                            .current_dir(&working_dir)
+                            .output()
+                            .await
+                        {
+                            tracing::warn!("Failed to compose restart: {}", e);
+                        }
+                    }
                 }
             }
             AppEvent::Resize(_, _) => {
@@ -311,6 +341,7 @@ async fn load_data(
     if let Ok(containers) = container_svc.list_all().await {
         app.containers = containers;
     }
+    app.compose_projects = crate::app::build_compose_projects(&app.containers);
     if let Ok(images) = image_svc.list().await {
         app.images = images;
     }
@@ -464,4 +495,7 @@ async fn load_panel_data(
         // Auto-scroll to bottom in follow mode
         app.log_view_scroll = app.log_view_lines.len().saturating_sub(1) as u16;
     }
+
+    // Always rebuild compose projects when containers change
+    app.compose_projects = crate::app::build_compose_projects(&app.containers);
 }

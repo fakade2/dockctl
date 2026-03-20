@@ -38,6 +38,12 @@ pub enum ThemeAction {
     ExecContainer { id: String },
     /// Theme wants to open the explain/detail view for the current selection.
     ExplainItem { use_inline: bool },
+    /// Theme wants to run `docker compose up -d` in a working directory.
+    ComposeUp { working_dir: String },
+    /// Theme wants to run `docker compose down` in a working directory.
+    ComposeDown { working_dir: String },
+    /// Theme wants to run `docker compose restart` in a working directory.
+    ComposeRestart { working_dir: String },
 }
 
 /// Trait that all themes must implement.

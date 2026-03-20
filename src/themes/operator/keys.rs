@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::App;
+use crate::app::{App, PanelId};
 use crate::config::DockctlConfig;
 use crate::themes::ThemeAction;
 
@@ -234,6 +234,24 @@ pub(super) fn operator_handle_key(
             ThemeAction::Consumed
         }
 
+        // Enter on compose — drill into project or explain service
+        (KeyCode::Enter, _) if app.operator_resource == "compose" => {
+            if app.compose_selected_project.is_none() {
+                // Drill into project
+                if let Some(project) = app.compose_projects.get(app.selected_index()) {
+                    app.compose_selected_project = Some(project.name.clone());
+                    let sel = app.selection.entry(PanelId::Containers).or_insert(0);
+                    *sel = 0;
+                    ThemeAction::Consumed
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                // At service level — explain/describe
+                ThemeAction::ExplainItem { use_inline: true }
+            }
+        }
+
         // Explain / Enter — open inline detail view
         (KeyCode::Char('e') | KeyCode::Enter, _) => ThemeAction::ExplainItem { use_inline: true },
 
@@ -255,6 +273,11 @@ pub(super) fn operator_handle_key(
             } else if !app.operator_filter.is_empty() {
                 app.operator_filter.clear();
                 ThemeAction::Consumed
+            } else if app.operator_resource == "compose" && app.compose_selected_project.is_some() {
+                app.compose_selected_project = None;
+                let sel = app.selection.entry(PanelId::Containers).or_insert(0);
+                *sel = 0;
+                ThemeAction::Consumed
             } else {
                 // Enter command mode (vim-style)
                 app.operator_command_mode = true;
@@ -271,6 +294,7 @@ pub(super) fn operator_handle_key(
                 vec![
                     "Resource Commands".into(),
                     sep.into(),
+                    ":compose     :comp :dc          Compose projects".into(),
                     ":containers  :con  :cnt  :c    Container list".into(),
                     ":images      :img  :im   :i    Image list".into(),
                     ":volumes     :vol  :v           Volume list".into(),
@@ -291,6 +315,120 @@ pub(super) fn operator_handle_key(
         (KeyCode::Char('?'), _) => {
             app.open_detail_view("Keybindings".to_string(), help_lines());
             ThemeAction::Consumed
+        }
+
+        // ── Compose actions (only when viewing compose, project level) ─────
+        (KeyCode::Char('u'), _)
+            if app.operator_resource == "compose" && app.compose_selected_project.is_none() =>
+        {
+            if let Some(project) = app.compose_projects.get(app.selected_index()) {
+                if !project.working_dir.is_empty() {
+                    ThemeAction::ComposeUp {
+                        working_dir: project.working_dir.clone(),
+                    }
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('x'), _)
+            if app.operator_resource == "compose" && app.compose_selected_project.is_none() =>
+        {
+            if let Some(project) = app.compose_projects.get(app.selected_index()) {
+                if !project.working_dir.is_empty() {
+                    ThemeAction::ComposeDown {
+                        working_dir: project.working_dir.clone(),
+                    }
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('r'), _)
+            if app.operator_resource == "compose" && app.compose_selected_project.is_none() =>
+        {
+            if let Some(project) = app.compose_projects.get(app.selected_index()) {
+                if !project.working_dir.is_empty() {
+                    ThemeAction::ComposeRestart {
+                        working_dir: project.working_dir.clone(),
+                    }
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+
+        // ── Compose service-level actions ─────
+        (KeyCode::Char('s'), _)
+            if app.operator_resource == "compose" && app.compose_selected_project.is_some() =>
+        {
+            // Stop selected service container
+            let project_name = app.compose_selected_project.as_ref().unwrap();
+            if let Some(project) = app
+                .compose_projects
+                .iter()
+                .find(|p| &p.name == project_name)
+            {
+                if let Some(svc) = project.services.get(app.selected_index()) {
+                    ThemeAction::StopContainer {
+                        id: svc.container_id.clone(),
+                    }
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('r'), _)
+            if app.operator_resource == "compose" && app.compose_selected_project.is_some() =>
+        {
+            // Restart selected service container
+            let project_name = app.compose_selected_project.as_ref().unwrap();
+            if let Some(project) = app
+                .compose_projects
+                .iter()
+                .find(|p| &p.name == project_name)
+            {
+                if let Some(svc) = project.services.get(app.selected_index()) {
+                    ThemeAction::RestartContainer {
+                        id: svc.container_id.clone(),
+                    }
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('l'), _)
+            if app.operator_resource == "compose" && app.compose_selected_project.is_some() =>
+        {
+            // Fetch logs for selected service container
+            let project_name = app.compose_selected_project.as_ref().unwrap();
+            if let Some(project) = app
+                .compose_projects
+                .iter()
+                .find(|p| &p.name == project_name)
+            {
+                if let Some(svc) = project.services.get(app.selected_index()) {
+                    ThemeAction::FetchLogs {
+                        id: svc.container_id.clone(),
+                        name: svc.name.clone(),
+                        tail: 500,
+                    }
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                ThemeAction::Consumed
+            }
         }
 
         // ── Container actions (only when viewing containers) ─────

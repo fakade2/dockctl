@@ -133,6 +133,19 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(" \u{203a} ", dim),
             Span::styled(detail_name.to_string(), white),
         ]
+    } else if resource == "compose" {
+        let mut spans = vec![
+            Span::styled(" dockctl", logo_style),
+            Span::raw("    "),
+            Span::styled("Docker", dim),
+            Span::styled(" \u{203a} ", dim),
+            Span::styled("Compose", white),
+        ];
+        if let Some(ref project_name) = app.compose_selected_project {
+            spans.push(Span::styled(" \u{203a} ", dim));
+            spans.push(Span::styled(project_name.clone(), white));
+        }
+        spans
     } else {
         vec![
             Span::styled(" dockctl", logo_style),
@@ -383,6 +396,30 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled("l", key_style),
                 Span::styled("logs ", label_style),
             ]);
+        } else if app.operator_resource == "compose" {
+            if app.compose_selected_project.is_none() {
+                s.extend(vec![
+                    Span::styled("Enter", key_style),
+                    Span::styled(":drill ", label_style),
+                    Span::styled("u", key_style),
+                    Span::styled(":up ", label_style),
+                    Span::styled("x", key_style),
+                    Span::styled(":down ", label_style),
+                    Span::styled("r", key_style),
+                    Span::styled(":restart ", label_style),
+                ]);
+            } else {
+                s.extend(vec![
+                    Span::styled("Esc", key_style),
+                    Span::styled(":back ", label_style),
+                    Span::styled("s", key_style),
+                    Span::styled(":stop ", label_style),
+                    Span::styled("r", key_style),
+                    Span::styled(":restart ", label_style),
+                    Span::styled("l", key_style),
+                    Span::styled(":logs ", label_style),
+                ]);
+            }
         }
         s.extend(vec![
             Span::styled("?", key_style),
