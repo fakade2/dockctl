@@ -151,9 +151,26 @@ impl Default for ColumnsConfig {
 // Loading
 // ---------------------------------------------------------------------------
 
-/// Return the canonical path for the config file:
-/// `~/.config/dockctl/config.toml`
+/// Resolve the config file path. Priority:
+/// 1. `./config.toml` (project directory — where cargo run is executed)
+/// 2. `~/.config/dockctl/config.toml` (XDG standard)
+/// 3. OS config dir (e.g. `~/Library/Application Support/dockctl/config.toml` on macOS)
 fn config_path() -> Option<PathBuf> {
+    // 1. Check current directory first
+    let local = PathBuf::from("config.toml");
+    if local.exists() {
+        return Some(local);
+    }
+
+    // 2. Check ~/.config/dockctl/ (XDG, works on all platforms)
+    if let Some(home) = dirs::home_dir() {
+        let xdg = home.join(".config").join("dockctl").join("config.toml");
+        if xdg.exists() {
+            return Some(xdg);
+        }
+    }
+
+    // 3. Fall back to OS config dir
     dirs::config_dir().map(|d| d.join("dockctl").join("config.toml"))
 }
 

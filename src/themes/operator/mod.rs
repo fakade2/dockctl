@@ -355,11 +355,11 @@ fn describe_selected(app: &App) -> (String, Vec<String>) {
 // ---------------------------------------------------------------------------
 
 fn draw_operator(frame: &mut Frame, app: &App, config: &DockctlConfig) {
-    // Layout: header (3) | table (fills) | footer (1)
+    // Layout: header (4) | table (fills) | footer (1)
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(4),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
@@ -383,39 +383,100 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let resource = &app.operator_resource;
     let resource_cap = capitalize(resource);
 
-    // Build info strings
-    let runtime_info = if let Some(info) = &app.system_info {
-        format!(
-            "{} v{}  {} cores",
-            info.runtime_type, info.server_version, info.cpus
-        )
-    } else {
-        String::new()
-    };
-
     let logo_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
     let breadcrumb_style = Style::default().fg(Color::White);
-    let info_style = Style::default().fg(Color::DarkGray);
+    let dim = Style::default().fg(Color::DarkGray);
+    let green = Style::default().fg(Color::Green);
+    let red = Style::default().fg(Color::Red);
+    let cyan = Style::default().fg(Color::Cyan);
 
-    let left_spans = vec![
+    // Row 1: logo + breadcrumb + runtime info (right-aligned)
+    let runtime_str = if let Some(info) = &app.system_info {
+        format!("{} v{}", info.runtime_type, info.server_version)
+    } else {
+        "connecting...".to_string()
+    };
+
+    let row1_left = vec![
         Span::styled(" dockctl ", logo_style),
-        Span::styled("   ", Style::default()),
-        Span::styled(format!("Docker > {}", resource_cap), breadcrumb_style),
+        Span::styled(" > ", dim),
+        Span::styled(resource_cap, breadcrumb_style),
+    ];
+    let row1_left_len: usize = row1_left.iter().map(|s| s.width()).sum();
+    let row1_right_len = runtime_str.len() + 1;
+    let row1_pad = (area.width as usize).saturating_sub(row1_left_len + row1_right_len);
+
+    let mut row1_spans = row1_left;
+    row1_spans.push(Span::raw(" ".repeat(row1_pad)));
+    row1_spans.push(Span::styled(format!("{} ", runtime_str), dim));
+
+    // Row 2: resource counts + system stats
+    let running = app
+        .containers
+        .iter()
+        .filter(|c| c.state == "running")
+        .count();
+    let stopped = app.containers.len() - running;
+
+    let mut row2_spans = vec![
+        Span::styled(" C:", dim),
+        Span::styled(format!("{}", running), green),
+        Span::styled("/", dim),
+        Span::styled(format!("{}", stopped), if stopped > 0 { red } else { dim }),
+        Span::styled("  I:", dim),
+        Span::styled(format!("{}", app.images.len()), cyan),
+        Span::styled("  V:", dim),
+        Span::styled(format!("{}", app.volumes.len()), cyan),
+        Span::styled("  N:", dim),
+        Span::styled(format!("{}", app.networks.len()), cyan),
     ];
 
-    let left_len: usize = left_spans.iter().map(|s| s.width()).sum();
-    let right_len = runtime_info.len() + 1;
-    let total = area.width as usize;
-    let padding = total.saturating_sub(left_len + right_len);
+    // System stats on the right of row 2
+    let cpu_pct = app.host_cpu_percent;
+    let mem_pct = if app.host_memory_total > 0 {
+        (app.host_memory_used as f64 / app.host_memory_total as f64) * 100.0
+    } else {
+        0.0
+    };
 
-    let mut spans = left_spans;
-    spans.push(Span::raw(" ".repeat(padding)));
-    spans.push(Span::styled(format!("{} ", runtime_info), info_style));
+    let cpu_color = percentage_color(cpu_pct);
+    let mem_color = percentage_color(mem_pct);
 
-    let line = Line::from(spans);
-    let header = Paragraph::new(line).block(
+    let stats_str = format!(
+        "CPU:{:.0}%  RAM:{:.0}%  {}",
+        cpu_pct,
+        mem_pct,
+        if let Some(info) = &app.system_info {
+            format!("{}cores/{}",
+                info.cpus,
+                format_bytes(info.memory_total))
+        } else {
+            String::new()
+        }
+    );
+
+    let row2_left_len: usize = row2_spans.iter().map(|s| s.width()).sum();
+    let row2_right_len = stats_str.len() + 1;
+    let row2_pad = (area.width as usize).saturating_sub(row2_left_len + row2_right_len + 2);
+
+    row2_spans.push(Span::raw(" ".repeat(row2_pad)));
+    row2_spans.push(Span::styled(format!("CPU:"), dim));
+    row2_spans.push(Span::styled(format!("{:.0}%", cpu_pct), Style::default().fg(cpu_color)));
+    row2_spans.push(Span::styled("  RAM:", dim));
+    row2_spans.push(Span::styled(format!("{:.0}%", mem_pct), Style::default().fg(mem_color)));
+
+    if let Some(info) = &app.system_info {
+        row2_spans.push(Span::styled(
+            format!("  {}cores/{} ", info.cpus, format_bytes(info.memory_total)),
+            dim,
+        ));
+    }
+
+    let lines = vec![Line::from(row1_spans), Line::from(row2_spans)];
+
+    let header = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(Color::DarkGray)),
