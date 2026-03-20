@@ -38,3 +38,32 @@ pub fn create_theme(name: &str) -> Box<dyn Theme> {
         _ => Box::new(dashboard::DashboardTheme::new()), // "dashboard" is the default
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_dashboard_theme() {
+        let theme = create_theme("dashboard");
+        assert_eq!(theme.name(), "dashboard");
+    }
+
+    #[test]
+    fn create_operator_theme() {
+        let theme = create_theme("operator");
+        assert_eq!(theme.name(), "operator");
+    }
+
+    #[test]
+    fn unknown_theme_defaults_to_dashboard() {
+        let theme = create_theme("nonexistent");
+        assert_eq!(theme.name(), "dashboard");
+    }
+
+    #[test]
+    fn empty_theme_defaults_to_dashboard() {
+        let theme = create_theme("");
+        assert_eq!(theme.name(), "dashboard");
+    }
+}

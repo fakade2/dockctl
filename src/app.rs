@@ -208,10 +208,6 @@ pub struct App {
     pub detail_view_content: Vec<String>,
     pub detail_view_scroll: u16,
 
-    // Status dot indicators cache: container_id -> health status
-    // true = healthy (green dot), false = unhealthy (red dot), None = unknown
-    pub container_health: HashMap<String, Option<bool>>,
-
     // Lifecycle
     pub should_quit: bool,
 }
@@ -272,8 +268,6 @@ impl App {
             sort_column: None,
             sort_ascending: true,
             wide_mode: false,
-            container_health: HashMap::new(),
-
             detail_view_active: false,
             detail_view_title: String::new(),
             detail_view_content: Vec::new(),
@@ -943,5 +937,59 @@ mod tests {
 
         app.toggle_wide_mode();
         assert!(!app.wide_mode);
+    }
+
+    #[test]
+    fn detail_view_open_close() {
+        let mut app = App::new(false);
+        assert!(!app.detail_view_active);
+
+        app.open_detail_view("Test".to_string(), vec!["line1".into(), "line2".into()]);
+        assert!(app.detail_view_active);
+        assert_eq!(app.detail_view_title, "Test");
+        assert_eq!(app.detail_view_content.len(), 2);
+        assert_eq!(app.detail_view_scroll, 0);
+
+        app.detail_view_scroll = 5;
+        app.close_detail_view();
+        assert!(!app.detail_view_active);
+        assert!(app.detail_view_title.is_empty());
+        assert!(app.detail_view_content.is_empty());
+        assert_eq!(app.detail_view_scroll, 0);
+    }
+
+    #[test]
+    fn column_offset_scrolling() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+
+        // Scroll right
+        app.scroll_columns_right(5);
+        assert_eq!(app.panel_column_offset(PanelId::Containers), 1);
+        app.scroll_columns_right(5);
+        assert_eq!(app.panel_column_offset(PanelId::Containers), 2);
+
+        // Scroll right at max (5 columns, should cap at 4)
+        app.scroll_columns_right(5);
+        app.scroll_columns_right(5);
+        app.scroll_columns_right(5); // should not go past 4
+        assert_eq!(app.panel_column_offset(PanelId::Containers), 4);
+
+        // Scroll left
+        app.scroll_columns_left();
+        assert_eq!(app.panel_column_offset(PanelId::Containers), 3);
+
+        // Scroll left to 0
+        for _ in 0..10 {
+            app.scroll_columns_left();
+        }
+        assert_eq!(app.panel_column_offset(PanelId::Containers), 0);
+
+        // Per-panel independence
+        app.active_panel = PanelId::Images;
+        assert_eq!(app.panel_column_offset(PanelId::Images), 0);
+        app.scroll_columns_right(3);
+        assert_eq!(app.panel_column_offset(PanelId::Images), 1);
+        assert_eq!(app.panel_column_offset(PanelId::Containers), 0); // unchanged
     }
 }

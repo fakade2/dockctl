@@ -156,11 +156,11 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
             let columns = current_columns(app, config);
             let current = app.sort_column.as_deref();
             let next_idx = match current {
-                Some(col) => {
-                    columns.iter().position(|c| c == col)
-                        .map(|i| (i + 1) % columns.len())
-                        .unwrap_or(0)
-                }
+                Some(col) => columns
+                    .iter()
+                    .position(|c| c == col)
+                    .map(|i| (i + 1) % columns.len())
+                    .unwrap_or(0),
                 None => 0,
             };
             if let Some(col) = columns.get(next_idx) {
@@ -170,12 +170,8 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
         }
 
         // Column reorder (Shift+Arrow) — consumed but no-op; use config.toml
-        (KeyCode::Left, KeyModifiers::SHIFT) => {
-            ThemeAction::Consumed
-        }
-        (KeyCode::Right, KeyModifiers::SHIFT) => {
-            ThemeAction::Consumed
-        }
+        (KeyCode::Left, KeyModifiers::SHIFT) => ThemeAction::Consumed,
+        (KeyCode::Right, KeyModifiers::SHIFT) => ThemeAction::Consumed,
 
         // Column scrolling
         (KeyCode::Right | KeyCode::Char('l'), _) => {
@@ -1785,7 +1781,6 @@ fn help_lines() -> Vec<String> {
         ":status      :pu       Pulses dashboard".into(),
         ":q           :quit     Quit dockctl".into(),
         "/            Filter (regex)".into(),
-        "/            Filter (regex)".into(),
         "Ctrl+A       Show all resource aliases".into(),
         String::new(),
         "Views".into(),
@@ -1823,5 +1818,98 @@ fn capitalize(s: &str) -> String {
     match chars.next() {
         None => String::new(),
         Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autocomplete_empty_input() {
+        assert_eq!(autocomplete_suggestion(""), None);
+    }
+
+    #[test]
+    fn autocomplete_prefix_match() {
+        assert_eq!(autocomplete_suggestion("c"), Some("containers"));
+        assert_eq!(autocomplete_suggestion("con"), Some("containers"));
+        assert_eq!(autocomplete_suggestion("containers"), Some("containers"));
+    }
+
+    #[test]
+    fn autocomplete_other_resources() {
+        assert_eq!(autocomplete_suggestion("i"), Some("images"));
+        assert_eq!(autocomplete_suggestion("v"), Some("volumes"));
+        assert_eq!(autocomplete_suggestion("n"), Some("networks"));
+        assert_eq!(autocomplete_suggestion("s"), Some("status"));
+        assert_eq!(autocomplete_suggestion("q"), Some("q"));
+    }
+
+    #[test]
+    fn autocomplete_no_match() {
+        assert_eq!(autocomplete_suggestion("xyz"), None);
+        assert_eq!(autocomplete_suggestion("zzzz"), None);
+    }
+
+    #[test]
+    fn fuzzy_match_exact() {
+        assert_eq!(fuzzy_match_resource("containers"), Some("containers"));
+        assert_eq!(fuzzy_match_resource("images"), Some("images"));
+        assert_eq!(fuzzy_match_resource("volumes"), Some("volumes"));
+        assert_eq!(fuzzy_match_resource("networks"), Some("networks"));
+        assert_eq!(fuzzy_match_resource("status"), Some("status"));
+    }
+
+    #[test]
+    fn fuzzy_match_abbreviations() {
+        assert_eq!(fuzzy_match_resource("c"), Some("containers"));
+        assert_eq!(fuzzy_match_resource("con"), Some("containers"));
+        assert_eq!(fuzzy_match_resource("cnt"), Some("containers"));
+        assert_eq!(fuzzy_match_resource("img"), Some("images"));
+        assert_eq!(fuzzy_match_resource("im"), Some("images"));
+        assert_eq!(fuzzy_match_resource("i"), Some("images"));
+        assert_eq!(fuzzy_match_resource("vol"), Some("volumes"));
+        assert_eq!(fuzzy_match_resource("v"), Some("volumes"));
+        assert_eq!(fuzzy_match_resource("net"), Some("networks"));
+        assert_eq!(fuzzy_match_resource("n"), Some("networks"));
+        assert_eq!(fuzzy_match_resource("pu"), Some("status"));
+        assert_eq!(fuzzy_match_resource("st"), Some("status"));
+    }
+
+    #[test]
+    fn fuzzy_match_no_match() {
+        assert_eq!(fuzzy_match_resource("xyz"), None);
+        assert_eq!(fuzzy_match_resource(""), None);
+    }
+
+    #[test]
+    fn execute_command_quit() {
+        let mut app = crate::app::App::new(false);
+        let result = execute_command(&mut app, "q");
+        assert!(matches!(result, ThemeAction::Quit));
+
+        let result = execute_command(&mut app, "quit");
+        assert!(matches!(result, ThemeAction::Quit));
+
+        let result = execute_command(&mut app, "exit");
+        assert!(matches!(result, ThemeAction::Quit));
+    }
+
+    #[test]
+    fn execute_command_switch_resource() {
+        let mut app = crate::app::App::new(false);
+        let result = execute_command(&mut app, "images");
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert_eq!(app.operator_resource, "images");
+    }
+
+    #[test]
+    fn execute_command_invalid() {
+        let mut app = crate::app::App::new(false);
+        let original = app.operator_resource.clone();
+        let result = execute_command(&mut app, "nonexistent");
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert_eq!(app.operator_resource, original); // unchanged
     }
 }
