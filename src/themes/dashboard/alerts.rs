@@ -17,6 +17,7 @@ pub fn draw_alerts_panel(frame: &mut Frame, area: Rect, app: &App, is_focused: b
     let block = panel_block("Alerts", PanelId::Alerts.number(), is_focused);
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    frame.render_widget(ratatui::widgets::Clear, inner);
 
     if app.alerts.is_empty() {
         let lines = vec![Line::from(Span::styled(

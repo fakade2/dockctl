@@ -18,6 +18,7 @@ pub fn draw_status_panel(frame: &mut Frame, area: Rect, app: &App, is_focused: b
     let block = panel_block("Status", PanelId::Status.number(), is_focused);
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    frame.render_widget(ratatui::widgets::Clear, inner);
 
     let selected = app.panel_selection(PanelId::Status);
     let mut rows: Vec<Line> = Vec::new();

@@ -20,6 +20,7 @@ pub fn draw_resources_panel(frame: &mut Frame, area: Rect, app: &App, is_focused
     let block = panel_block("Resources", PanelId::Resources.number(), is_focused);
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    frame.render_widget(ratatui::widgets::Clear, inner);
 
     let selected = app.panel_selection(PanelId::Resources);
 

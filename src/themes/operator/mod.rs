@@ -133,6 +133,19 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(" \u{203a} ", dim),
             Span::styled(detail_name.to_string(), white),
         ]
+    } else if resource == "compose" {
+        let mut spans = vec![
+            Span::styled(" dockctl", logo_style),
+            Span::raw("    "),
+            Span::styled("Docker", dim),
+            Span::styled(" \u{203a} ", dim),
+            Span::styled("Compose", white),
+        ];
+        if let Some(ref project_name) = app.compose_selected_project {
+            spans.push(Span::styled(" \u{203a} ", dim));
+            spans.push(Span::styled(project_name.clone(), white));
+        }
+        spans
     } else {
         vec![
             Span::styled(" dockctl", logo_style),
@@ -343,14 +356,14 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(":back ", label_style),
             Span::styled("f", key_style),
             Span::styled(":follow ", label_style),
+            Span::styled("w", key_style),
+            Span::styled(":wrap ", label_style),
+            Span::styled("←→", key_style),
+            Span::styled(":hscroll ", label_style),
             Span::styled("j/k", key_style),
-            Span::styled(":scroll ", label_style),
-            Span::styled("g", key_style),
-            Span::styled("/", label_style),
-            Span::styled("G", key_style),
-            Span::styled(":top/end ", label_style),
+            Span::styled(":vscroll ", label_style),
             Span::styled("0-5", key_style),
-            Span::styled(":tail(50-1k) ", label_style),
+            Span::styled(":tail ", label_style),
         ]
     } else if app.detail_view_active {
         vec![
@@ -383,6 +396,30 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled("l", key_style),
                 Span::styled("logs ", label_style),
             ]);
+        } else if app.operator_resource == "compose" {
+            if app.compose_selected_project.is_none() {
+                s.extend(vec![
+                    Span::styled("Enter", key_style),
+                    Span::styled(":drill ", label_style),
+                    Span::styled("u", key_style),
+                    Span::styled(":up ", label_style),
+                    Span::styled("x", key_style),
+                    Span::styled(":down ", label_style),
+                    Span::styled("r", key_style),
+                    Span::styled(":restart ", label_style),
+                ]);
+            } else {
+                s.extend(vec![
+                    Span::styled("Esc", key_style),
+                    Span::styled(":back ", label_style),
+                    Span::styled("s", key_style),
+                    Span::styled(":stop ", label_style),
+                    Span::styled("r", key_style),
+                    Span::styled(":restart ", label_style),
+                    Span::styled("l", key_style),
+                    Span::styled(":logs ", label_style),
+                ]);
+            }
         }
         s.extend(vec![
             Span::styled("?", key_style),

@@ -25,6 +25,7 @@ pub fn draw_volume_panel(
     let title = format!("Volumes ({})", count);
 
     if !is_expanded {
+        frame.render_widget(ratatui::widgets::Clear, area);
         let line = collapsed_panel_line(&title, PanelId::Volumes.number(), is_focused);
         frame.render_widget(ratatui::widgets::Paragraph::new(line), area);
         return;

@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::App;
+use crate::app::{App, PanelId};
 use crate::config::DockctlConfig;
 use crate::themes::ThemeAction;
 
@@ -91,6 +91,27 @@ pub(super) fn operator_handle_key(
             KeyCode::PageUp => {
                 app.log_view_follow = false;
                 app.log_view_scroll = app.log_view_scroll.saturating_sub(20);
+                ThemeAction::Consumed
+            }
+            // Horizontal scroll
+            KeyCode::Right | KeyCode::Char('l') => {
+                if !app.log_view_wrap {
+                    app.log_view_h_scroll = app.log_view_h_scroll.saturating_add(4);
+                }
+                ThemeAction::Consumed
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                app.log_view_h_scroll = app.log_view_h_scroll.saturating_sub(4);
+                ThemeAction::Consumed
+            }
+            KeyCode::Home => {
+                app.log_view_h_scroll = 0;
+                ThemeAction::Consumed
+            }
+            // Wrap toggle
+            KeyCode::Char('w') => {
+                app.log_view_wrap = !app.log_view_wrap;
+                app.log_view_h_scroll = 0;
                 ThemeAction::Consumed
             }
             KeyCode::Char(':') => {
@@ -234,6 +255,24 @@ pub(super) fn operator_handle_key(
             ThemeAction::Consumed
         }
 
+        // Enter on compose — drill into project or explain service
+        (KeyCode::Enter, _) if app.operator_resource == "compose" => {
+            if app.compose_selected_project.is_none() {
+                // Drill into project
+                if let Some(project) = app.compose_projects.get(app.selected_index()) {
+                    app.compose_selected_project = Some(project.name.clone());
+                    let sel = app.selection.entry(PanelId::Containers).or_insert(0);
+                    *sel = 0;
+                    ThemeAction::Consumed
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                // At service level — explain/describe
+                ThemeAction::ExplainItem { use_inline: true }
+            }
+        }
+
         // Explain / Enter — open inline detail view
         (KeyCode::Char('e') | KeyCode::Enter, _) => ThemeAction::ExplainItem { use_inline: true },
 
@@ -255,6 +294,11 @@ pub(super) fn operator_handle_key(
             } else if !app.operator_filter.is_empty() {
                 app.operator_filter.clear();
                 ThemeAction::Consumed
+            } else if app.operator_resource == "compose" && app.compose_selected_project.is_some() {
+                app.compose_selected_project = None;
+                let sel = app.selection.entry(PanelId::Containers).or_insert(0);
+                *sel = 0;
+                ThemeAction::Consumed
             } else {
                 // Enter command mode (vim-style)
                 app.operator_command_mode = true;
@@ -271,6 +315,7 @@ pub(super) fn operator_handle_key(
                 vec![
                     "Resource Commands".into(),
                     sep.into(),
+                    ":compose     :comp :dc          Compose projects".into(),
                     ":containers  :con  :cnt  :c    Container list".into(),
                     ":images      :img  :im   :i    Image list".into(),
                     ":volumes     :vol  :v           Volume list".into(),
@@ -291,6 +336,120 @@ pub(super) fn operator_handle_key(
         (KeyCode::Char('?'), _) => {
             app.open_detail_view("Keybindings".to_string(), help_lines());
             ThemeAction::Consumed
+        }
+
+        // ── Compose actions (only when viewing compose, project level) ─────
+        (KeyCode::Char('u'), _)
+            if app.operator_resource == "compose" && app.compose_selected_project.is_none() =>
+        {
+            if let Some(project) = app.compose_projects.get(app.selected_index()) {
+                if !project.working_dir.is_empty() {
+                    ThemeAction::ComposeUp {
+                        working_dir: project.working_dir.clone(),
+                    }
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('x'), _)
+            if app.operator_resource == "compose" && app.compose_selected_project.is_none() =>
+        {
+            if let Some(project) = app.compose_projects.get(app.selected_index()) {
+                if !project.working_dir.is_empty() {
+                    ThemeAction::ComposeDown {
+                        working_dir: project.working_dir.clone(),
+                    }
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('r'), _)
+            if app.operator_resource == "compose" && app.compose_selected_project.is_none() =>
+        {
+            if let Some(project) = app.compose_projects.get(app.selected_index()) {
+                if !project.working_dir.is_empty() {
+                    ThemeAction::ComposeRestart {
+                        working_dir: project.working_dir.clone(),
+                    }
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+
+        // ── Compose service-level actions ─────
+        (KeyCode::Char('s'), _)
+            if app.operator_resource == "compose" && app.compose_selected_project.is_some() =>
+        {
+            // Stop selected service container
+            let project_name = app.compose_selected_project.as_ref().unwrap();
+            if let Some(project) = app
+                .compose_projects
+                .iter()
+                .find(|p| &p.name == project_name)
+            {
+                if let Some(svc) = project.services.get(app.selected_index()) {
+                    ThemeAction::StopContainer {
+                        id: svc.container_id.clone(),
+                    }
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('r'), _)
+            if app.operator_resource == "compose" && app.compose_selected_project.is_some() =>
+        {
+            // Restart selected service container
+            let project_name = app.compose_selected_project.as_ref().unwrap();
+            if let Some(project) = app
+                .compose_projects
+                .iter()
+                .find(|p| &p.name == project_name)
+            {
+                if let Some(svc) = project.services.get(app.selected_index()) {
+                    ThemeAction::RestartContainer {
+                        id: svc.container_id.clone(),
+                    }
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        (KeyCode::Char('l'), _)
+            if app.operator_resource == "compose" && app.compose_selected_project.is_some() =>
+        {
+            // Fetch logs for selected service container
+            let project_name = app.compose_selected_project.as_ref().unwrap();
+            if let Some(project) = app
+                .compose_projects
+                .iter()
+                .find(|p| &p.name == project_name)
+            {
+                if let Some(svc) = project.services.get(app.selected_index()) {
+                    ThemeAction::FetchLogs {
+                        id: svc.container_id.clone(),
+                        name: svc.name.clone(),
+                        tail: 500,
+                    }
+                } else {
+                    ThemeAction::Consumed
+                }
+            } else {
+                ThemeAction::Consumed
+            }
         }
 
         // ── Container actions (only when viewing containers) ─────
@@ -1030,5 +1189,160 @@ mod tests {
         let offset_after_right = app.panel_column_offset(app.active_panel);
         operator_handle_key(key(KeyCode::Char('h')), &mut app, &config);
         assert!(app.panel_column_offset(app.active_panel) < offset_after_right);
+    }
+
+    // ── Compose key handling ────────────────────────────────────────
+
+    // Compose: Enter drills into project
+    #[test]
+    fn compose_enter_drills_into_project() {
+        let mut app = App::new(false);
+        app.operator_resource = "compose".into();
+        app.compose_projects = vec![crate::app::ComposeProject {
+            name: "myapp".into(),
+            working_dir: "/home/myapp".into(),
+            services: vec![],
+            running_count: 0,
+            total_count: 0,
+        }];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Enter), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert_eq!(app.compose_selected_project, Some("myapp".into()));
+    }
+
+    // Compose: Esc goes back from service to project level
+    #[test]
+    fn compose_esc_back_to_projects() {
+        let mut app = App::new(false);
+        app.operator_resource = "compose".into();
+        app.compose_selected_project = Some("myapp".into());
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+        assert_eq!(app.compose_selected_project, None);
+    }
+
+    // Compose: u returns ComposeUp
+    #[test]
+    fn compose_u_returns_up() {
+        let mut app = App::new(false);
+        app.operator_resource = "compose".into();
+        app.compose_projects = vec![crate::app::ComposeProject {
+            name: "myapp".into(),
+            working_dir: "/home/myapp".into(),
+            services: vec![],
+            running_count: 0,
+            total_count: 0,
+        }];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('u')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::ComposeUp { .. }));
+    }
+
+    // Compose: x returns ComposeDown
+    #[test]
+    fn compose_x_returns_down() {
+        let mut app = App::new(false);
+        app.operator_resource = "compose".into();
+        app.compose_projects = vec![crate::app::ComposeProject {
+            name: "myapp".into(),
+            working_dir: "/home/myapp".into(),
+            services: vec![],
+            running_count: 0,
+            total_count: 0,
+        }];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::ComposeDown { .. }));
+    }
+
+    // Compose: r returns ComposeRestart
+    #[test]
+    fn compose_r_returns_restart() {
+        let mut app = App::new(false);
+        app.operator_resource = "compose".into();
+        app.compose_projects = vec![crate::app::ComposeProject {
+            name: "myapp".into(),
+            working_dir: "/home/myapp".into(),
+            services: vec![],
+            running_count: 0,
+            total_count: 0,
+        }];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('r')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::ComposeRestart { .. }));
+    }
+
+    // Compose: actions with empty working_dir return Consumed
+    #[test]
+    fn compose_actions_empty_workdir() {
+        let mut app = App::new(false);
+        app.operator_resource = "compose".into();
+        app.compose_projects = vec![crate::app::ComposeProject {
+            name: "myapp".into(),
+            working_dir: "".into(), // empty
+            services: vec![],
+            running_count: 0,
+            total_count: 0,
+        }];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('u')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    // ── Log view: horizontal scroll ─────────────────────────────────
+
+    #[test]
+    fn log_h_scroll_right() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        app.log_view_follow = false;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Right), &mut app, &config);
+        assert_eq!(app.log_view_h_scroll, 4);
+    }
+
+    #[test]
+    fn log_h_scroll_left_no_underflow() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        app.log_view_follow = false;
+        app.log_view_h_scroll = 0;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Left), &mut app, &config);
+        assert_eq!(app.log_view_h_scroll, 0);
+    }
+
+    #[test]
+    fn log_home_resets_h_scroll() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        app.log_view_h_scroll = 20;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Home), &mut app, &config);
+        assert_eq!(app.log_view_h_scroll, 0);
+    }
+
+    // Log view: wrap toggle
+    #[test]
+    fn log_wrap_toggle() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        assert!(!app.log_view_wrap);
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('w')), &mut app, &config);
+        assert!(app.log_view_wrap);
+        assert_eq!(app.log_view_h_scroll, 0); // reset on wrap toggle
+    }
+
+    #[test]
+    fn log_h_scroll_disabled_when_wrapped() {
+        let mut app = App::new(false);
+        app.open_log_view("id".into(), "name".into(), vec!["line".into()]);
+        app.log_view_wrap = true;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Right), &mut app, &config);
+        assert_eq!(app.log_view_h_scroll, 0); // no scroll when wrapped
     }
 }

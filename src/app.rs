@@ -4,6 +4,90 @@ use crate::runtime::{
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
+// Compose types — Docker Compose project/service aggregation
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct ComposeProject {
+    pub name: String,
+    pub working_dir: String,
+    pub services: Vec<ComposeService>,
+    pub running_count: usize,
+    pub total_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComposeService {
+    pub name: String,
+    pub container_id: String,
+    pub container_name: String,
+    pub state: String,
+    pub status: String,
+    pub image: String,
+    pub ports: Vec<crate::runtime::PortMapping>,
+}
+
+/// Build compose projects from container labels.
+pub fn build_compose_projects(containers: &[ContainerSummary]) -> Vec<ComposeProject> {
+    let mut projects: HashMap<String, Vec<&ContainerSummary>> = HashMap::new();
+
+    for c in containers {
+        if let Some(project) = c.labels.get("com.docker.compose.project")
+            && !project.is_empty()
+        {
+            projects.entry(project.clone()).or_default().push(c);
+        }
+    }
+
+    let mut result: Vec<ComposeProject> = projects
+        .into_iter()
+        .map(|(name, ctrs)| {
+            let working_dir = ctrs
+                .first()
+                .and_then(|c| {
+                    c.labels
+                        .get("com.docker.compose.project.working_dir")
+                        .cloned()
+                })
+                .unwrap_or_default();
+
+            let services: Vec<ComposeService> = ctrs
+                .iter()
+                .map(|c| {
+                    let svc_name = c
+                        .labels
+                        .get("com.docker.compose.service")
+                        .cloned()
+                        .unwrap_or_else(|| c.name.clone());
+                    ComposeService {
+                        name: svc_name,
+                        container_id: c.id.clone(),
+                        container_name: c.name.clone(),
+                        state: c.state.clone(),
+                        status: c.status.clone(),
+                        image: c.image.clone(),
+                        ports: c.ports.clone(),
+                    }
+                })
+                .collect();
+
+            let running_count = services.iter().filter(|s| s.state == "running").count();
+            let total_count = services.len();
+            ComposeProject {
+                name,
+                working_dir,
+                services,
+                running_count,
+                total_count,
+            }
+        })
+        .collect();
+
+    result.sort_by(|a, b| a.name.cmp(&b.name));
+    result
+}
+
+// ---------------------------------------------------------------------------
 // PanelId — identifies each of the 7 panels in the lazygit-style layout
 // ---------------------------------------------------------------------------
 
@@ -208,13 +292,19 @@ pub struct App {
     pub detail_view_content: Vec<String>,
     pub detail_view_scroll: u16,
 
+    // Compose state
+    pub compose_projects: Vec<ComposeProject>,
+    pub compose_selected_project: Option<String>, // None = project list, Some = drilled into
+
     // Log viewer state
     pub log_view_active: bool,
     pub log_view_container_id: String,
     pub log_view_container_name: String,
     pub log_view_lines: Vec<String>,
     pub log_view_scroll: u16,
-    pub log_view_follow: bool, // auto-scroll + refresh on tick
+    pub log_view_h_scroll: u16, // horizontal scroll offset
+    pub log_view_follow: bool,  // auto-scroll + refresh on tick
+    pub log_view_wrap: bool,    // text wrap toggle
 
     // Lifecycle
     pub should_quit: bool,
@@ -281,12 +371,17 @@ impl App {
             detail_view_content: Vec::new(),
             detail_view_scroll: 0,
 
+            compose_projects: Vec::new(),
+            compose_selected_project: None,
+
             log_view_active: false,
             log_view_container_id: String::new(),
             log_view_container_name: String::new(),
             log_view_lines: Vec::new(),
             log_view_scroll: 0,
+            log_view_h_scroll: 0,
             log_view_follow: false,
+            log_view_wrap: false,
 
             should_quit: false,
         }
@@ -362,8 +457,9 @@ impl App {
         self.log_view_container_id = container_id;
         self.log_view_container_name = container_name;
         self.log_view_follow = true;
+        self.log_view_wrap = false;
+        self.log_view_h_scroll = 0;
         self.log_view_lines = lines;
-        // Auto-scroll to bottom
         self.log_view_scroll = self.log_view_lines.len().saturating_sub(1) as u16;
     }
 
@@ -374,7 +470,9 @@ impl App {
         self.log_view_container_name.clear();
         self.log_view_lines.clear();
         self.log_view_scroll = 0;
+        self.log_view_h_scroll = 0;
         self.log_view_follow = false;
+        self.log_view_wrap = false;
     }
 
     // ------------------------------------------------------------------
@@ -1055,5 +1153,166 @@ mod tests {
         app.scroll_columns_right(3);
         assert_eq!(app.panel_column_offset(PanelId::Images), 1);
         assert_eq!(app.panel_column_offset(PanelId::Containers), 0); // unchanged
+    }
+
+    #[test]
+    fn build_compose_projects_groups_by_label() {
+        let containers = vec![
+            // Container with compose labels
+            ContainerSummary {
+                id: "a".into(),
+                name: "web-1".into(),
+                names: vec!["web-1".into()],
+                image: "nginx".into(),
+                image_id: "sha256:a".into(),
+                command: "".into(),
+                state: "running".into(),
+                status: "Up".into(),
+                created: 0,
+                ports: vec![],
+                labels: HashMap::from([
+                    ("com.docker.compose.project".into(), "myapp".into()),
+                    ("com.docker.compose.service".into(), "web".into()),
+                    (
+                        "com.docker.compose.project.working_dir".into(),
+                        "/home/myapp".into(),
+                    ),
+                ]),
+            },
+            ContainerSummary {
+                id: "b".into(),
+                name: "db-1".into(),
+                names: vec!["db-1".into()],
+                image: "postgres".into(),
+                image_id: "sha256:b".into(),
+                command: "".into(),
+                state: "running".into(),
+                status: "Up".into(),
+                created: 0,
+                ports: vec![],
+                labels: HashMap::from([
+                    ("com.docker.compose.project".into(), "myapp".into()),
+                    ("com.docker.compose.service".into(), "db".into()),
+                ]),
+            },
+            // Standalone container (no compose labels)
+            ContainerSummary {
+                id: "c".into(),
+                name: "standalone".into(),
+                names: vec!["standalone".into()],
+                image: "redis".into(),
+                image_id: "sha256:c".into(),
+                command: "".into(),
+                state: "running".into(),
+                status: "Up".into(),
+                created: 0,
+                ports: vec![],
+                labels: HashMap::new(),
+            },
+        ];
+
+        let projects = build_compose_projects(&containers);
+        assert_eq!(projects.len(), 1); // only "myapp", standalone excluded
+        assert_eq!(projects[0].name, "myapp");
+        assert_eq!(projects[0].services.len(), 2);
+        assert_eq!(projects[0].running_count, 2);
+        assert_eq!(projects[0].working_dir, "/home/myapp");
+    }
+
+    #[test]
+    fn build_compose_projects_empty() {
+        let projects = build_compose_projects(&[]);
+        assert!(projects.is_empty());
+    }
+
+    #[test]
+    fn build_compose_no_compose_containers() {
+        let containers = vec![ContainerSummary {
+            id: "a".into(),
+            name: "standalone".into(),
+            names: vec!["standalone".into()],
+            image: "redis".into(),
+            image_id: "sha256:a".into(),
+            command: "".into(),
+            state: "running".into(),
+            status: "Up".into(),
+            created: 0,
+            ports: vec![],
+            labels: HashMap::new(),
+        }];
+        let projects = build_compose_projects(&containers);
+        assert!(projects.is_empty());
+    }
+
+    #[test]
+    fn build_compose_multiple_projects() {
+        let containers = vec![
+            ContainerSummary {
+                id: "a".into(),
+                name: "web".into(),
+                names: vec!["web".into()],
+                image: "nginx".into(),
+                image_id: "sha256:a".into(),
+                command: "".into(),
+                state: "running".into(),
+                status: "Up".into(),
+                created: 0,
+                ports: vec![],
+                labels: HashMap::from([
+                    ("com.docker.compose.project".into(), "app1".into()),
+                    ("com.docker.compose.service".into(), "web".into()),
+                ]),
+            },
+            ContainerSummary {
+                id: "b".into(),
+                name: "db".into(),
+                names: vec!["db".into()],
+                image: "postgres".into(),
+                image_id: "sha256:b".into(),
+                command: "".into(),
+                state: "exited".into(),
+                status: "Exited".into(),
+                created: 0,
+                ports: vec![],
+                labels: HashMap::from([
+                    ("com.docker.compose.project".into(), "app2".into()),
+                    ("com.docker.compose.service".into(), "db".into()),
+                ]),
+            },
+        ];
+        let projects = build_compose_projects(&containers);
+        assert_eq!(projects.len(), 2);
+        // Sorted alphabetically
+        assert_eq!(projects[0].name, "app1");
+        assert_eq!(projects[1].name, "app2");
+        assert_eq!(projects[0].running_count, 1);
+        assert_eq!(projects[1].running_count, 0);
+    }
+
+    #[test]
+    fn build_compose_service_ports_preserved() {
+        let containers = vec![ContainerSummary {
+            id: "a".into(),
+            name: "web".into(),
+            names: vec!["web".into()],
+            image: "nginx".into(),
+            image_id: "sha256:a".into(),
+            command: "".into(),
+            state: "running".into(),
+            status: "Up".into(),
+            created: 0,
+            ports: vec![crate::runtime::PortMapping {
+                ip: Some("0.0.0.0".into()),
+                private_port: 80,
+                public_port: Some(8080),
+                port_type: "tcp".into(),
+            }],
+            labels: HashMap::from([
+                ("com.docker.compose.project".into(), "myapp".into()),
+                ("com.docker.compose.service".into(), "web".into()),
+            ]),
+        }];
+        let projects = build_compose_projects(&containers);
+        assert_eq!(projects[0].services[0].ports.len(), 1);
     }
 }

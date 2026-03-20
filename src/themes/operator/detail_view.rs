@@ -94,6 +94,58 @@ pub(super) fn describe_selected(app: &App) -> (String, Vec<String>) {
                 )
             }
         }
+        "compose" => {
+            let idx = app.panel_selection(PanelId::Containers);
+            if let Some(ref project_name) = app.compose_selected_project {
+                // Service level
+                let project = app
+                    .compose_projects
+                    .iter()
+                    .find(|p| &p.name == project_name);
+                if let Some(svc) = project.and_then(|p| p.services.get(idx)) {
+                    let title = format!("Service: {}", svc.name);
+                    let lines = vec![
+                        format!("Service:   {}", svc.name),
+                        format!("Image:     {}", svc.image),
+                        format!("State:     {}", svc.state),
+                        format!("Status:    {}", svc.status),
+                        format!("Container: {}", svc.container_name),
+                        format!("ID:        {}", short_id(&svc.container_id)),
+                        format!("Ports:     {}", format_ports(&svc.ports)),
+                    ];
+                    (title, lines)
+                } else {
+                    (
+                        "No Selection".to_string(),
+                        vec!["No service selected".to_string()],
+                    )
+                }
+            } else {
+                // Project level
+                if let Some(project) = app.compose_projects.get(idx) {
+                    let title = format!("Project: {}", project.name);
+                    let mut lines = vec![
+                        format!("Project:     {}", project.name),
+                        format!("Working Dir: {}", project.working_dir),
+                        format!(
+                            "Services:    {}/{}",
+                            project.running_count, project.total_count
+                        ),
+                        String::new(),
+                        "Services:".to_string(),
+                    ];
+                    for svc in &project.services {
+                        lines.push(format!("  {} ({}) - {}", svc.name, svc.state, svc.image));
+                    }
+                    (title, lines)
+                } else {
+                    (
+                        "No Selection".to_string(),
+                        vec!["No project selected".to_string()],
+                    )
+                }
+            }
+        }
         _ => ("Unknown".to_string(), vec!["Unknown resource".to_string()]),
     }
 }

@@ -165,6 +165,19 @@ pub(super) fn row_counts(app: &App) -> (usize, usize) {
             };
             (total, filtered)
         }
+        "compose" => {
+            if let Some(ref project_name) = app.compose_selected_project {
+                let total = app
+                    .compose_projects
+                    .iter()
+                    .find(|p| &p.name == project_name)
+                    .map(|p| p.services.len())
+                    .unwrap_or(0);
+                (total, total) // no filtering for now
+            } else {
+                (app.compose_projects.len(), app.compose_projects.len())
+            }
+        }
         _ => (0, 0),
     }
 }
@@ -219,6 +232,16 @@ pub(super) fn help_lines() -> Vec<String> {
         "x            Remove container".into(),
         "l            View logs".into(),
         "E            Exec into container (tmux)".into(),
+        String::new(),
+        "Compose Actions (in :compose)".into(),
+        sep.into(),
+        "u            Compose up (project level)".into(),
+        "x            Compose down (project level)".into(),
+        "r            Restart project/service".into(),
+        "Enter        Drill into project".into(),
+        "Esc          Back to project list".into(),
+        "l            View logs (service level)".into(),
+        "s            Stop service (service level)".into(),
         String::new(),
         "General".into(),
         sep.into(),
