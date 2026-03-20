@@ -105,9 +105,13 @@ impl Default for LayoutConfig {
 #[serde(default)]
 pub struct ColumnsConfig {
     pub containers: Vec<String>,
+    pub containers_wide: Vec<String>, // extra columns in wide mode
     pub images: Vec<String>,
+    pub images_wide: Vec<String>,
     pub volumes: Vec<String>,
+    pub volumes_wide: Vec<String>,
     pub networks: Vec<String>,
+    pub networks_wide: Vec<String>,
 }
 
 impl Default for ColumnsConfig {
@@ -123,6 +127,18 @@ impl Default for ColumnsConfig {
                 "ID".into(),
                 "Status".into(),
             ],
+            containers_wide: vec![
+                "Name".into(),
+                "Image".into(),
+                "State".into(),
+                "Ports".into(),
+                "CPU".into(),
+                "Memory".into(),
+                "ID".into(),
+                "Command".into(),
+                "Status".into(),
+                "Created".into(),
+            ],
             images: vec![
                 "Repository".into(),
                 "Tag".into(),
@@ -130,11 +146,27 @@ impl Default for ColumnsConfig {
                 "Size".into(),
                 "Created".into(),
             ],
+            images_wide: vec![
+                "Repository".into(),
+                "Tag".into(),
+                "ID".into(),
+                "Size".into(),
+                "Created".into(),
+                "Digests".into(),
+            ],
             volumes: vec![
                 "Name".into(),
                 "Driver".into(),
                 "Mountpoint".into(),
                 "Created".into(),
+            ],
+            volumes_wide: vec![
+                "Name".into(),
+                "Driver".into(),
+                "Mountpoint".into(),
+                "Created".into(),
+                "Scope".into(),
+                "Labels".into(),
             ],
             networks: vec![
                 "Name".into(),
@@ -142,6 +174,15 @@ impl Default for ColumnsConfig {
                 "Driver".into(),
                 "Scope".into(),
                 "Containers".into(),
+            ],
+            networks_wide: vec![
+                "Name".into(),
+                "ID".into(),
+                "Driver".into(),
+                "Scope".into(),
+                "Containers".into(),
+                "Internal".into(),
+                "IPv6".into(),
             ],
         }
     }

@@ -7,13 +7,12 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
 };
 
-use crate::app::{App, PanelId};
+use crate::app::{AlertLevel, App, PanelId};
 use crate::config::DockctlConfig;
 use crate::themes::{Theme, ThemeAction};
 use crate::ui::{
-    container_display_name, create_table_header, format_bytes, format_ports, format_scroll_hint,
-    format_timestamp_age, percentage_color, selected_row_style, short_id, truncate_str,
-    visible_column_count,
+    container_display_name, format_bytes, format_ports, format_scroll_hint, format_timestamp_age,
+    percentage_color, selected_row_style, short_id, truncate_str, visible_column_count,
 };
 
 pub struct OperatorTheme;
@@ -47,6 +46,27 @@ impl Theme for OperatorTheme {
 // ---------------------------------------------------------------------------
 // Key handling
 // ---------------------------------------------------------------------------
+
+fn current_columns<'a>(app: &App, config: &'a DockctlConfig) -> &'a [String] {
+    let cols_config = &config.columns;
+    if app.wide_mode {
+        match app.operator_resource.as_str() {
+            "containers" => &cols_config.containers_wide,
+            "images" => &cols_config.images_wide,
+            "volumes" => &cols_config.volumes_wide,
+            "networks" => &cols_config.networks_wide,
+            _ => &cols_config.containers_wide,
+        }
+    } else {
+        match app.operator_resource.as_str() {
+            "containers" => &cols_config.containers,
+            "images" => &cols_config.images,
+            "volumes" => &cols_config.volumes,
+            "networks" => &cols_config.networks,
+            _ => &cols_config.containers,
+        }
+    }
+}
 
 fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> ThemeAction {
     // Command mode — typing a : command
@@ -87,6 +107,48 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
             ThemeAction::Consumed
         }
 
+        // Sort by name
+        (KeyCode::Char('N'), KeyModifiers::SHIFT) => {
+            app.toggle_sort("Name");
+            ThemeAction::Consumed
+        }
+        // Sort by status/state
+        (KeyCode::Char('S'), KeyModifiers::SHIFT) => {
+            app.toggle_sort("State");
+            ThemeAction::Consumed
+        }
+        // Sort by age/created
+        (KeyCode::Char('A'), KeyModifiers::SHIFT) => {
+            app.toggle_sort("Created");
+            ThemeAction::Consumed
+        }
+        // Generic sort (cycle through columns)
+        (KeyCode::Char('O'), KeyModifiers::SHIFT) => {
+            // Cycle to next column as sort target
+            let columns = current_columns(app, config);
+            let current = app.sort_column.as_deref();
+            let next_idx = match current {
+                Some(col) => {
+                    columns.iter().position(|c| c == col)
+                        .map(|i| (i + 1) % columns.len())
+                        .unwrap_or(0)
+                }
+                None => 0,
+            };
+            if let Some(col) = columns.get(next_idx) {
+                app.toggle_sort(col);
+            }
+            ThemeAction::Consumed
+        }
+
+        // Column reorder (Shift+Arrow) — consumed but no-op; use config.toml
+        (KeyCode::Left, KeyModifiers::SHIFT) => {
+            ThemeAction::Consumed
+        }
+        (KeyCode::Right, KeyModifiers::SHIFT) => {
+            ThemeAction::Consumed
+        }
+
         // Column scrolling
         (KeyCode::Right | KeyCode::Char('l'), _) => {
             let max_cols = operator_max_cols(app, config);
@@ -107,13 +169,47 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
         // Explain / Enter — open detail popup
         (KeyCode::Char('e') | KeyCode::Enter, _) => ThemeAction::NotHandled,
 
-        // Esc — clear filter if active, otherwise not handled
+        // Wide mode toggle
+        (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
+            app.toggle_wide_mode();
+            ThemeAction::Consumed
+        }
+
+        // Esc — back navigation
         (KeyCode::Esc, _) => {
-            if !app.operator_filter.is_empty() {
+            if app.operator_filter_active {
+                app.operator_filter_active = false;
                 app.operator_filter.clear();
+                ThemeAction::Consumed
+            } else if !app.operator_filter.is_empty() {
+                app.operator_filter.clear();
+                ThemeAction::Consumed
+            } else if app.pop_view() {
+                // Navigated back to previous view
                 ThemeAction::Consumed
             } else {
                 ThemeAction::Consumed
+            }
+        }
+
+        // Show all resource aliases
+        (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
+            ThemeAction::OpenPopup {
+                title: "Resource Aliases".to_string(),
+                content: vec![
+                    "Resource Commands".to_string(),
+                    "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}".to_string(),
+                    ":containers  :con  :cnt  :c    Container list".to_string(),
+                    ":images      :img  :im   :i    Image list".to_string(),
+                    ":volumes     :vol  :v           Volume list".to_string(),
+                    ":networks    :net  :n           Network list".to_string(),
+                    ":status      :pu               System pulses/dashboard".to_string(),
+                    String::new(),
+                    "Navigation".to_string(),
+                    "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}".to_string(),
+                    "Esc          Go back to previous view".to_string(),
+                    "Ctrl+A       This alias list".to_string(),
+                ],
             }
         }
 
@@ -127,6 +223,15 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
                 "k / Up       Move up".to_string(),
                 "h / Left     Scroll columns left".to_string(),
                 "l / Right    Scroll columns right".to_string(),
+                String::new(),
+                "Sort & Display".to_string(),
+                "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}".to_string(),
+                "Shift+O      Cycle sort column".to_string(),
+                "Shift+N      Sort by name".to_string(),
+                "Shift+S      Sort by state".to_string(),
+                "Shift+A      Sort by age".to_string(),
+                "Ctrl+W       Toggle wide mode".to_string(),
+                "Ctrl+A       Show resource aliases".to_string(),
                 String::new(),
                 "Commands".to_string(),
                 "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}".to_string(),
@@ -203,26 +308,26 @@ fn handle_filter_mode(key: KeyEvent, app: &mut App) -> ThemeAction {
     }
 }
 
-/// Execute a : command — switch resource view.
+/// Execute a : command — switch resource view (with history stack).
 fn execute_command(app: &mut App, cmd: &str) {
     let cmd = cmd.trim().to_lowercase();
     let resource = fuzzy_match_resource(&cmd);
     if let Some(res) = resource {
-        app.operator_resource = res.to_string();
+        app.push_view(res); // Uses history stack
         // Sync active_panel so container actions in main.rs work
         match res {
             "containers" => app.focus_panel(PanelId::Containers),
             "images" => app.focus_panel(PanelId::Images),
             "volumes" => app.focus_panel(PanelId::Volumes),
             "networks" => app.focus_panel(PanelId::Networks),
-            _ => {}
+            _ => {} // "status" doesn't need panel sync
         }
     }
 }
 
 /// Fuzzy match a command input to a resource name.
 fn fuzzy_match_resource(input: &str) -> Option<&'static str> {
-    let resources = ["containers", "images", "volumes", "networks"];
+    let resources = ["containers", "images", "volumes", "networks", "status"];
     // Exact match first
     if let Some(r) = resources.iter().find(|&&r| r == input) {
         return Some(r);
@@ -241,18 +346,13 @@ fn fuzzy_match_resource(input: &str) -> Option<&'static str> {
         "img" | "im" | "i" => Some("images"),
         "vol" | "v" => Some("volumes"),
         "net" | "n" => Some("networks"),
+        "pu" | "pulse" | "pulses" | "st" | "stat" => Some("status"),
         _ => None,
     }
 }
 
 fn operator_max_cols(app: &App, config: &DockctlConfig) -> usize {
-    match app.operator_resource.as_str() {
-        "containers" => config.columns.containers.len(),
-        "images" => config.columns.images.len(),
-        "volumes" => config.columns.volumes.len(),
-        "networks" => config.columns.networks.len(),
-        _ => 0,
-    }
+    current_columns(app, config).len()
 }
 
 /// Build describe lines for the currently selected item based on resource view.
@@ -355,11 +455,11 @@ fn describe_selected(app: &App) -> (String, Vec<String>) {
 // ---------------------------------------------------------------------------
 
 fn draw_operator(frame: &mut Frame, app: &App, config: &DockctlConfig) {
-    // Layout: header (4) | table (fills) | footer (1)
+    // Layout: header (5) | table (fills) | footer (1)
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(4),
+            Constraint::Length(5),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
@@ -449,9 +549,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         cpu_pct,
         mem_pct,
         if let Some(info) = &app.system_info {
-            format!("{}cores/{}",
-                info.cpus,
-                format_bytes(info.memory_total))
+            format!("{}cores/{}", info.cpus, format_bytes(info.memory_total))
         } else {
             String::new()
         }
@@ -462,10 +560,16 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let row2_pad = (area.width as usize).saturating_sub(row2_left_len + row2_right_len + 2);
 
     row2_spans.push(Span::raw(" ".repeat(row2_pad)));
-    row2_spans.push(Span::styled(format!("CPU:"), dim));
-    row2_spans.push(Span::styled(format!("{:.0}%", cpu_pct), Style::default().fg(cpu_color)));
+    row2_spans.push(Span::styled("CPU:", dim));
+    row2_spans.push(Span::styled(
+        format!("{:.0}%", cpu_pct),
+        Style::default().fg(cpu_color),
+    ));
     row2_spans.push(Span::styled("  RAM:", dim));
-    row2_spans.push(Span::styled(format!("{:.0}%", mem_pct), Style::default().fg(mem_color)));
+    row2_spans.push(Span::styled(
+        format!("{:.0}%", mem_pct),
+        Style::default().fg(mem_color),
+    ));
 
     if let Some(info) = &app.system_info {
         row2_spans.push(Span::styled(
@@ -474,7 +578,14 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
-    let lines = vec![Line::from(row1_spans), Line::from(row2_spans)];
+    // Row 3: context-sensitive shortcuts
+    let row3_spans = build_shortcut_row(resource);
+
+    let lines = vec![
+        Line::from(row1_spans),
+        Line::from(row2_spans),
+        Line::from(row3_spans),
+    ];
 
     let header = Paragraph::new(lines).block(
         Block::default()
@@ -484,13 +595,78 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(header, area);
 }
 
+/// Build the context-sensitive shortcut spans for the header row 3.
+fn build_shortcut_row(resource: &str) -> Vec<Span<'static>> {
+    let key_style = Style::default().fg(Color::Cyan);
+    let label_style = Style::default().fg(Color::DarkGray);
+
+    let shortcuts: Vec<(&str, &str)> = match resource {
+        "containers" => vec![
+            ("<d>", "describe "),
+            ("<e>", "explain "),
+            ("<s>", "stop "),
+            ("<r>", "restart "),
+            ("<x>", "delete "),
+            ("<l>", "logs "),
+            ("<E>", "exec"),
+        ],
+        "images" => vec![("<d>", "describe "), ("<e>", "explain")],
+        "volumes" => vec![("<d>", "describe "), ("<e>", "explain")],
+        "networks" => vec![("<d>", "describe "), ("<e>", "explain")],
+        _ => vec![],
+    };
+
+    let mut spans = vec![Span::raw(" ")];
+    for (key, label) in shortcuts {
+        spans.push(Span::styled(key.to_string(), key_style));
+        spans.push(Span::styled(label.to_string(), label_style));
+    }
+    spans
+}
+
 fn draw_resource_table(frame: &mut Frame, area: Rect, app: &App, config: &DockctlConfig) {
     match app.operator_resource.as_str() {
-        "containers" => draw_containers_table(frame, area, app, &config.columns.containers),
-        "images" => draw_images_table(frame, area, app, &config.columns.images),
-        "volumes" => draw_volumes_table(frame, area, app, &config.columns.volumes),
-        "networks" => draw_networks_table(frame, area, app, &config.columns.networks),
-        _ => draw_containers_table(frame, area, app, &config.columns.containers),
+        "containers" => {
+            let cols = if app.wide_mode {
+                &config.columns.containers_wide
+            } else {
+                &config.columns.containers
+            };
+            draw_containers_table(frame, area, app, cols);
+        }
+        "images" => {
+            let cols = if app.wide_mode {
+                &config.columns.images_wide
+            } else {
+                &config.columns.images
+            };
+            draw_images_table(frame, area, app, cols);
+        }
+        "volumes" => {
+            let cols = if app.wide_mode {
+                &config.columns.volumes_wide
+            } else {
+                &config.columns.volumes
+            };
+            draw_volumes_table(frame, area, app, cols);
+        }
+        "networks" => {
+            let cols = if app.wide_mode {
+                &config.columns.networks_wide
+            } else {
+                &config.columns.networks
+            };
+            draw_networks_table(frame, area, app, cols);
+        }
+        "status" => draw_status_view(frame, area, app),
+        _ => {
+            let cols = if app.wide_mode {
+                &config.columns.containers_wide
+            } else {
+                &config.columns.containers
+            };
+            draw_containers_table(frame, area, app, cols);
+        }
     }
 }
 
@@ -503,7 +679,7 @@ fn draw_containers_table(frame: &mut Frame, area: Rect, app: &App, columns: &[St
     let start = col_offset.min(columns.len().saturating_sub(max_visible));
     let visible_cols = &columns[start..(start + max_visible).min(columns.len())];
 
-    let header = create_table_header(visible_cols);
+    let header = create_sorted_header(visible_cols, app.sort_column.as_deref(), app.sort_ascending);
 
     let filtered: Vec<(usize, &crate::runtime::ContainerSummary)> = app
         .containers
@@ -526,12 +702,18 @@ fn draw_containers_table(frame: &mut Frame, area: Rect, app: &App, columns: &[St
         .map(|(display_idx, (_, c))| {
             let sc = state_color(&c.state);
             let style = selected_row_style(true, display_idx == selected);
+            let (dot, dot_color) = container_status_dot(&c.state);
 
             let cells: Vec<Cell> = visible_cols
                 .iter()
                 .map(|col| match col.as_str() {
-                    "Name" => Cell::from(format!(" {}", container_display_name(&c.names)))
-                        .style(Style::default().fg(Color::White)),
+                    "Name" => {
+                        let name = container_display_name(&c.names);
+                        Cell::from(Line::from(vec![
+                            Span::styled(format!(" {} ", dot), Style::default().fg(dot_color)),
+                            Span::styled(name, Style::default().fg(Color::White)),
+                        ]))
+                    }
                     "Image" => Cell::from(c.image.clone()).style(Style::default().fg(Color::Gray)),
                     "Status" => Cell::from(c.status.clone()).style(Style::default().fg(sc)),
                     "State" => Cell::from(c.state.clone()).style(Style::default().fg(sc)),
@@ -582,9 +764,14 @@ fn draw_containers_table(frame: &mut Frame, area: Rect, app: &App, columns: &[St
         })
         .collect();
 
-    let count = filtered.len();
     let scroll_hint = format_scroll_hint(start, max_visible, columns.len());
-    let title = format!(" Containers ({}) {} ", count, scroll_hint);
+    let title = k9s_table_title(
+        "containers",
+        app.containers.len(),
+        filtered.len(),
+        filter,
+        &scroll_hint,
+    );
 
     let table = Table::new(rows, col_widths)
         .header(header)
@@ -617,7 +804,7 @@ fn draw_images_table(frame: &mut Frame, area: Rect, app: &App, columns: &[String
     let start = col_offset.min(columns.len().saturating_sub(max_visible));
     let visible_cols = &columns[start..(start + max_visible).min(columns.len())];
 
-    let header = create_table_header(visible_cols);
+    let header = create_sorted_header(visible_cols, app.sort_column.as_deref(), app.sort_ascending);
 
     let filtered: Vec<(usize, &crate::runtime::ImageSummary)> = app
         .images
@@ -638,6 +825,7 @@ fn draw_images_table(frame: &mut Frame, area: Rect, app: &App, columns: &[String
         .enumerate()
         .map(|(display_idx, (_, img))| {
             let style = selected_row_style(true, display_idx == selected);
+            let (dot, dot_color) = image_status_dot(&img.repo_tags);
 
             let cells: Vec<Cell> =
                 visible_cols
@@ -649,7 +837,10 @@ fn draw_images_table(frame: &mut Frame, area: Rect, app: &App, columns: &[String
                                 .first()
                                 .map(|t| t.split(':').next().unwrap_or(t).to_string())
                                 .unwrap_or_else(|| "<none>".into());
-                            Cell::from(format!(" {}", tag)).style(Style::default().fg(Color::White))
+                            Cell::from(Line::from(vec![
+                                Span::styled(format!(" {} ", dot), Style::default().fg(dot_color)),
+                                Span::styled(tag, Style::default().fg(Color::White)),
+                            ]))
                         }
                         "Tag" => {
                             let tag = img
@@ -685,9 +876,14 @@ fn draw_images_table(frame: &mut Frame, area: Rect, app: &App, columns: &[String
         })
         .collect();
 
-    let count = filtered.len();
     let scroll_hint = format_scroll_hint(start, max_visible, columns.len());
-    let title = format!(" Images ({}) {} ", count, scroll_hint);
+    let title = k9s_table_title(
+        "images",
+        app.images.len(),
+        filtered.len(),
+        filter,
+        &scroll_hint,
+    );
 
     let table = Table::new(rows, col_widths)
         .header(header)
@@ -720,7 +916,7 @@ fn draw_volumes_table(frame: &mut Frame, area: Rect, app: &App, columns: &[Strin
     let start = col_offset.min(columns.len().saturating_sub(max_visible));
     let visible_cols = &columns[start..(start + max_visible).min(columns.len())];
 
-    let header = create_table_header(visible_cols);
+    let header = create_sorted_header(visible_cols, app.sort_column.as_deref(), app.sort_ascending);
 
     let filtered: Vec<(usize, &crate::runtime::VolumeSummary)> = app
         .volumes
@@ -735,6 +931,10 @@ fn draw_volumes_table(frame: &mut Frame, area: Rect, app: &App, columns: &[Strin
         })
         .collect();
 
+    // Volumes: all get a blue dot
+    let vol_dot = "\u{25cf}";
+    let vol_dot_color = Color::Blue;
+
     let rows: Vec<Row> = filtered
         .iter()
         .enumerate()
@@ -744,8 +944,10 @@ fn draw_volumes_table(frame: &mut Frame, area: Rect, app: &App, columns: &[Strin
             let cells: Vec<Cell> = visible_cols
                 .iter()
                 .map(|col| match col.as_str() {
-                    "Name" => Cell::from(format!(" {}", vol.name))
-                        .style(Style::default().fg(Color::White)),
+                    "Name" => Cell::from(Line::from(vec![
+                        Span::styled(format!(" {} ", vol_dot), Style::default().fg(vol_dot_color)),
+                        Span::styled(vol.name.clone(), Style::default().fg(Color::White)),
+                    ])),
                     "Driver" => {
                         Cell::from(vol.driver.clone()).style(Style::default().fg(Color::Yellow))
                     }
@@ -772,9 +974,14 @@ fn draw_volumes_table(frame: &mut Frame, area: Rect, app: &App, columns: &[Strin
         })
         .collect();
 
-    let count = filtered.len();
     let scroll_hint = format_scroll_hint(start, max_visible, columns.len());
-    let title = format!(" Volumes ({}) {} ", count, scroll_hint);
+    let title = k9s_table_title(
+        "volumes",
+        app.volumes.len(),
+        filtered.len(),
+        filter,
+        &scroll_hint,
+    );
 
     let table = Table::new(rows, col_widths)
         .header(header)
@@ -807,7 +1014,7 @@ fn draw_networks_table(frame: &mut Frame, area: Rect, app: &App, columns: &[Stri
     let start = col_offset.min(columns.len().saturating_sub(max_visible));
     let visible_cols = &columns[start..(start + max_visible).min(columns.len())];
 
-    let header = create_table_header(visible_cols);
+    let header = create_sorted_header(visible_cols, app.sort_column.as_deref(), app.sort_ascending);
 
     let filtered: Vec<(usize, &crate::runtime::NetworkSummary)> = app
         .networks
@@ -827,12 +1034,15 @@ fn draw_networks_table(frame: &mut Frame, area: Rect, app: &App, columns: &[Stri
         .enumerate()
         .map(|(display_idx, (_, net))| {
             let style = selected_row_style(true, display_idx == selected);
+            let (dot, dot_color) = network_status_dot(net.containers.len());
 
             let cells: Vec<Cell> = visible_cols
                 .iter()
                 .map(|col| match col.as_str() {
-                    "Name" => Cell::from(format!(" {}", net.name))
-                        .style(Style::default().fg(Color::White)),
+                    "Name" => Cell::from(Line::from(vec![
+                        Span::styled(format!(" {} ", dot), Style::default().fg(dot_color)),
+                        Span::styled(net.name.clone(), Style::default().fg(Color::White)),
+                    ])),
                     "ID" => {
                         Cell::from(short_id(&net.id)).style(Style::default().fg(Color::DarkGray))
                     }
@@ -878,9 +1088,14 @@ fn draw_networks_table(frame: &mut Frame, area: Rect, app: &App, columns: &[Stri
         })
         .collect();
 
-    let count = filtered.len();
     let scroll_hint = format_scroll_hint(start, max_visible, columns.len());
-    let title = format!(" Networks ({}) {} ", count, scroll_hint);
+    let title = k9s_table_title(
+        "networks",
+        app.networks.len(),
+        filtered.len(),
+        filter,
+        &scroll_hint,
+    );
 
     let table = Table::new(rows, col_widths)
         .header(header)
@@ -925,7 +1140,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled("_", Style::default().fg(Color::White)),
         ]
     } else {
-        // Normal footer
+        // Normal footer with row count
         let mut spans = vec![
             Span::styled(format!(" :{} ", app.operator_resource), key_style),
             Span::styled("| ", sep_style),
@@ -949,12 +1164,452 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled("?:", label_style),
             Span::styled("help", key_style),
         ]);
+
+        // Row count display
+        let (total, filtered) = row_counts(app);
+        let row_str = if !app.operator_filter.is_empty() && filtered != total {
+            format!("  rows:{}/{}", filtered, total)
+        } else {
+            format!("  rows:{}", total)
+        };
+        spans.push(Span::styled(row_str, label_style));
+
         spans
     };
 
     let line = Line::from(spans);
     let footer = Paragraph::new(line);
     frame.render_widget(footer, area);
+}
+
+// ---------------------------------------------------------------------------
+// Sort-aware header
+// ---------------------------------------------------------------------------
+
+/// Create a table header row with sort indicators. If `sort_column` matches
+/// a visible column name, an arrow is prepended to that column's header.
+fn create_sorted_header(
+    columns: &[String],
+    sort_column: Option<&str>,
+    sort_ascending: bool,
+) -> Row<'static> {
+    let cells: Vec<Cell> = columns
+        .iter()
+        .map(|c| {
+            let label = if sort_column == Some(c.as_str()) {
+                let arrow = if sort_ascending {
+                    "\u{25b2}"
+                } else {
+                    "\u{25bc}"
+                };
+                format!(" {} {}", arrow, c)
+            } else {
+                format!(" {}", c)
+            };
+            Cell::from(label).style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+        })
+        .collect();
+    Row::new(cells).style(
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Status dot helpers
+// ---------------------------------------------------------------------------
+
+/// Return (dot_char, dot_color) for a container based on its state.
+fn container_status_dot(state: &str) -> (&'static str, Color) {
+    match state {
+        "running" => ("\u{25cf}", Color::Green),
+        "paused" | "restarting" => ("\u{25cf}", Color::Yellow),
+        "created" => ("\u{25cb}", Color::DarkGray),
+        "exited" | "dead" => ("\u{25cf}", Color::Red),
+        _ => ("\u{25cf}", Color::Red),
+    }
+}
+
+/// Return (dot_char, dot_color) for an image based on its tags.
+fn image_status_dot(repo_tags: &[String]) -> (&'static str, Color) {
+    let is_none = repo_tags.is_empty() || repo_tags.iter().all(|t| t == "<none>:<none>");
+    if is_none {
+        ("\u{25cf}", Color::Red)
+    } else {
+        ("\u{25cf}", Color::Green)
+    }
+}
+
+/// Return (dot_char, dot_color) for a network based on connected containers.
+fn network_status_dot(container_count: usize) -> (&'static str, Color) {
+    if container_count > 0 {
+        ("\u{25cf}", Color::Green)
+    } else {
+        ("\u{25cf}", Color::DarkGray)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// K9s-style table title: " Containers(12)[all] [1-4/8] "
+// ---------------------------------------------------------------------------
+
+fn k9s_table_title(
+    resource: &str,
+    _total_count: usize,
+    filtered_count: usize,
+    filter: &str,
+    scroll_hint: &str,
+) -> String {
+    let filter_tag = if filter.is_empty() {
+        "all".to_string()
+    } else {
+        filter.to_string()
+    };
+    format!(
+        " {}({})[{}] {} ",
+        capitalize(resource),
+        filtered_count,
+        filter_tag,
+        scroll_hint,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Pulses / Status view  (:status or :pu)
+// ---------------------------------------------------------------------------
+
+fn draw_status_view(frame: &mut Frame, area: Rect, app: &App) {
+    let dim = Style::default().fg(Color::DarkGray);
+    let white = Style::default().fg(Color::White);
+    let cyan = Style::default().fg(Color::Cyan);
+    let green = Style::default().fg(Color::Green);
+    let red = Style::default().fg(Color::Red);
+
+    // Split area into top (system + docker) and bottom (top-cpu + top-mem + alerts)
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(8), // System stats + Docker stats
+            Constraint::Min(1),    // Top containers + alerts
+        ])
+        .split(area);
+
+    let top_halves = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(outer[0]);
+
+    let bottom_thirds = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(33),
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+        ])
+        .split(outer[1]);
+
+    // --- System Stats ---
+    let cpu_pct = app.host_cpu_percent;
+    let mem_pct = if app.host_memory_total > 0 {
+        (app.host_memory_used as f64 / app.host_memory_total as f64) * 100.0
+    } else {
+        0.0
+    };
+    let swap_pct = if app.host_swap_total > 0 {
+        (app.host_swap_used as f64 / app.host_swap_total as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let cpu_bar = gauge_bar(cpu_pct, 20);
+    let mem_bar = gauge_bar(mem_pct, 20);
+    let swap_bar = gauge_bar(swap_pct, 20);
+
+    let system_lines = vec![
+        Line::from(vec![
+            Span::styled(" CPU  ", dim),
+            Span::styled(cpu_bar, Style::default().fg(percentage_color(cpu_pct))),
+            Span::styled(format!(" {:.1}%", cpu_pct), white),
+        ]),
+        Line::from(vec![
+            Span::styled(" RAM  ", dim),
+            Span::styled(mem_bar, Style::default().fg(percentage_color(mem_pct))),
+            Span::styled(
+                format!(
+                    " {:.1}% ({}/{})",
+                    mem_pct,
+                    format_bytes(app.host_memory_used),
+                    format_bytes(app.host_memory_total)
+                ),
+                white,
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(" Swap ", dim),
+            Span::styled(swap_bar, Style::default().fg(percentage_color(swap_pct))),
+            Span::styled(
+                format!(
+                    " {:.1}% ({}/{})",
+                    swap_pct,
+                    format_bytes(app.host_swap_used),
+                    format_bytes(app.host_swap_total)
+                ),
+                white,
+            ),
+        ]),
+    ];
+
+    let system_block = Block::default()
+        .title(" System ")
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(dim);
+    let system_widget = Paragraph::new(system_lines).block(system_block);
+    frame.render_widget(system_widget, top_halves[0]);
+
+    // --- Docker Stats ---
+    let running = app
+        .containers
+        .iter()
+        .filter(|c| c.state == "running")
+        .count();
+    let stopped = app.containers.len() - running;
+
+    let docker_lines = vec![
+        Line::from(vec![
+            Span::styled(" Containers  ", dim),
+            Span::styled(format!("{}", running), green),
+            Span::styled(" running  ", dim),
+            Span::styled(format!("{}", stopped), if stopped > 0 { red } else { dim }),
+            Span::styled(" stopped", dim),
+        ]),
+        Line::from(vec![
+            Span::styled(" Images      ", dim),
+            Span::styled(format!("{}", app.images.len()), cyan),
+        ]),
+        Line::from(vec![
+            Span::styled(" Volumes     ", dim),
+            Span::styled(format!("{}", app.volumes.len()), cyan),
+        ]),
+        Line::from(vec![
+            Span::styled(" Networks    ", dim),
+            Span::styled(format!("{}", app.networks.len()), cyan),
+        ]),
+    ];
+
+    let docker_block = Block::default()
+        .title(" Docker ")
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(dim);
+    let docker_widget = Paragraph::new(docker_lines).block(docker_block);
+    frame.render_widget(docker_widget, top_halves[1]);
+
+    // --- Top 5 by CPU ---
+    let mut cpu_sorted: Vec<(&String, f64)> = app
+        .container_stats
+        .iter()
+        .map(|(id, (cpu, _))| (id, *cpu))
+        .collect();
+    cpu_sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    cpu_sorted.truncate(5);
+
+    let cpu_lines: Vec<Line> = cpu_sorted
+        .iter()
+        .map(|(id, cpu)| {
+            let name = app
+                .containers
+                .iter()
+                .find(|c| &c.id == *id)
+                .map(|c| container_display_name(&c.names))
+                .unwrap_or_else(|| short_id(id));
+            Line::from(vec![
+                Span::styled(
+                    format!(" {:.1}%", cpu),
+                    Style::default().fg(percentage_color(*cpu)),
+                ),
+                Span::styled(format!("  {}", name), white),
+            ])
+        })
+        .collect();
+
+    let cpu_block = Block::default()
+        .title(" Top CPU ")
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(dim);
+    let cpu_widget = Paragraph::new(cpu_lines).block(cpu_block);
+    frame.render_widget(cpu_widget, bottom_thirds[0]);
+
+    // --- Top 5 by Memory ---
+    let mut mem_sorted: Vec<(&String, u64)> = app
+        .container_stats
+        .iter()
+        .map(|(id, (_, mem))| (id, *mem))
+        .collect();
+    mem_sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    mem_sorted.truncate(5);
+
+    let mem_lines: Vec<Line> = mem_sorted
+        .iter()
+        .map(|(id, mem)| {
+            let name = app
+                .containers
+                .iter()
+                .find(|c| &c.id == *id)
+                .map(|c| container_display_name(&c.names))
+                .unwrap_or_else(|| short_id(id));
+            Line::from(vec![
+                Span::styled(format!(" {}", format_bytes(*mem)), cyan),
+                Span::styled(format!("  {}", name), white),
+            ])
+        })
+        .collect();
+
+    let mem_block = Block::default()
+        .title(" Top Memory ")
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(dim);
+    let mem_widget = Paragraph::new(mem_lines).block(mem_block);
+    frame.render_widget(mem_widget, bottom_thirds[1]);
+
+    // --- Alerts ---
+    let alert_lines: Vec<Line> = if app.alerts.is_empty() {
+        vec![Line::from(Span::styled(" No active alerts", dim))]
+    } else {
+        app.alerts
+            .iter()
+            .map(|alert| {
+                let (icon, color) = match alert.level {
+                    AlertLevel::Critical => ("\u{25cf}", Color::Red),
+                    AlertLevel::Warning => ("\u{25cf}", Color::Yellow),
+                };
+                Line::from(vec![
+                    Span::styled(format!(" {} ", icon), Style::default().fg(color)),
+                    Span::styled(alert.message.clone(), Style::default().fg(color)),
+                ])
+            })
+            .collect()
+    };
+
+    let alert_block = Block::default()
+        .title(" Alerts ")
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(dim);
+    let alert_widget = Paragraph::new(alert_lines).block(alert_block);
+    frame.render_widget(alert_widget, bottom_thirds[2]);
+}
+
+/// Build a text-based gauge bar: [========------] for a given percentage.
+fn gauge_bar(pct: f64, width: usize) -> String {
+    let filled = ((pct / 100.0) * width as f64).round() as usize;
+    let filled = filled.min(width);
+    let empty = width - filled;
+    format!(
+        "[{}{}]",
+        "\u{2588}".repeat(filled),
+        "\u{2500}".repeat(empty),
+    )
+}
+
+/// Return (total_rows, filtered_rows) for the current resource view.
+fn row_counts(app: &App) -> (usize, usize) {
+    let filter = &app.operator_filter;
+    match app.operator_resource.as_str() {
+        "containers" => {
+            let total = app.containers.len();
+            let filtered = if filter.is_empty() {
+                total
+            } else {
+                let f = filter.to_lowercase();
+                app.containers
+                    .iter()
+                    .filter(|c| {
+                        container_display_name(&c.names).to_lowercase().contains(&f)
+                            || c.image.to_lowercase().contains(&f)
+                            || c.state.to_lowercase().contains(&f)
+                    })
+                    .count()
+            };
+            (total, filtered)
+        }
+        "images" => {
+            let total = app.images.len();
+            let filtered = if filter.is_empty() {
+                total
+            } else {
+                let f = filter.to_lowercase();
+                app.images
+                    .iter()
+                    .filter(|img| {
+                        img.repo_tags.iter().any(|t| t.to_lowercase().contains(&f))
+                            || short_id(&img.id).contains(&f)
+                    })
+                    .count()
+            };
+            (total, filtered)
+        }
+        "volumes" => {
+            let total = app.volumes.len();
+            let filtered = if filter.is_empty() {
+                total
+            } else {
+                let f = filter.to_lowercase();
+                app.volumes
+                    .iter()
+                    .filter(|vol| {
+                        vol.name.to_lowercase().contains(&f)
+                            || vol.driver.to_lowercase().contains(&f)
+                    })
+                    .count()
+            };
+            (total, filtered)
+        }
+        "networks" => {
+            let total = app.networks.len();
+            let filtered = if filter.is_empty() {
+                total
+            } else {
+                let f = filter.to_lowercase();
+                app.networks
+                    .iter()
+                    .filter(|net| {
+                        net.name.to_lowercase().contains(&f)
+                            || net.driver.to_lowercase().contains(&f)
+                    })
+                    .count()
+            };
+            (total, filtered)
+        }
+        _ => (0, 0),
+    }
 }
 
 /// Popup overlay — same style as dashboard theme.

@@ -192,6 +192,20 @@ pub struct App {
     pub operator_filter: String,
     pub operator_filter_active: bool,
 
+    // View history (for Esc-back navigation)
+    pub view_history: Vec<String>, // stack of previous operator_resource values
+
+    // Sort state
+    pub sort_column: Option<String>, // which column is sorted
+    pub sort_ascending: bool,        // sort direction
+
+    // Wide mode (show extra columns)
+    pub wide_mode: bool,
+
+    // Status dot indicators cache: container_id -> health status
+    // true = healthy (green dot), false = unhealthy (red dot), None = unknown
+    pub container_health: HashMap<String, Option<bool>>,
+
     // Lifecycle
     pub should_quit: bool,
 }
@@ -248,8 +262,57 @@ impl App {
             operator_filter: String::new(),
             operator_filter_active: false,
 
+            view_history: Vec::new(),
+            sort_column: None,
+            sort_ascending: true,
+            wide_mode: false,
+            container_health: HashMap::new(),
+
             should_quit: false,
         }
+    }
+
+    // ------------------------------------------------------------------
+    // View history (Esc-back navigation)
+    // ------------------------------------------------------------------
+
+    /// Push current resource to history and switch to new one (for Esc-back).
+    pub fn push_view(&mut self, new_resource: &str) {
+        self.view_history.push(self.operator_resource.clone());
+        self.operator_resource = new_resource.to_string();
+    }
+
+    /// Pop back to previous view. Returns true if there was a history entry.
+    pub fn pop_view(&mut self) -> bool {
+        if let Some(prev) = self.view_history.pop() {
+            self.operator_resource = prev;
+            true
+        } else {
+            false
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Sort
+    // ------------------------------------------------------------------
+
+    /// Toggle sort on a column. If already sorted by this column, reverse direction.
+    pub fn toggle_sort(&mut self, column: &str) {
+        if self.sort_column.as_deref() == Some(column) {
+            self.sort_ascending = !self.sort_ascending;
+        } else {
+            self.sort_column = Some(column.to_string());
+            self.sort_ascending = true;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Wide mode
+    // ------------------------------------------------------------------
+
+    /// Toggle wide mode.
+    pub fn toggle_wide_mode(&mut self) {
+        self.wide_mode = !self.wide_mode;
     }
 
     // ------------------------------------------------------------------
@@ -794,5 +857,64 @@ mod tests {
         for &panel in PanelId::ALL {
             assert!(!panel.label().is_empty(), "{panel:?} has an empty label");
         }
+    }
+
+    #[test]
+    fn view_history_push_pop() {
+        let mut app = App::new(false);
+        assert_eq!(app.operator_resource, "containers");
+
+        // Push two views
+        app.push_view("images");
+        assert_eq!(app.operator_resource, "images");
+
+        app.push_view("volumes");
+        assert_eq!(app.operator_resource, "volumes");
+
+        // Pop back — should restore "images"
+        assert!(app.pop_view());
+        assert_eq!(app.operator_resource, "images");
+
+        // Pop back — should restore "containers"
+        assert!(app.pop_view());
+        assert_eq!(app.operator_resource, "containers");
+
+        // Pop on empty history — returns false, resource unchanged
+        assert!(!app.pop_view());
+        assert_eq!(app.operator_resource, "containers");
+    }
+
+    #[test]
+    fn toggle_sort_column() {
+        let mut app = App::new(false);
+        assert!(app.sort_column.is_none());
+        assert!(app.sort_ascending);
+
+        // First toggle on "Name" — sets column, ascending
+        app.toggle_sort("Name");
+        assert_eq!(app.sort_column.as_deref(), Some("Name"));
+        assert!(app.sort_ascending);
+
+        // Toggle same column — reverses direction
+        app.toggle_sort("Name");
+        assert_eq!(app.sort_column.as_deref(), Some("Name"));
+        assert!(!app.sort_ascending);
+
+        // Toggle different column — resets to ascending
+        app.toggle_sort("State");
+        assert_eq!(app.sort_column.as_deref(), Some("State"));
+        assert!(app.sort_ascending);
+    }
+
+    #[test]
+    fn toggle_wide_mode() {
+        let mut app = App::new(false);
+        assert!(!app.wide_mode);
+
+        app.toggle_wide_mode();
+        assert!(app.wide_mode);
+
+        app.toggle_wide_mode();
+        assert!(!app.wide_mode);
     }
 }
