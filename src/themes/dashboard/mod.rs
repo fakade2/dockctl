@@ -48,7 +48,8 @@ fn dashboard_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) ->
                 return ThemeAction::Consumed;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                app.popup_scroll = app.popup_scroll.saturating_add(1);
+                let max = app.popup_content.len().saturating_sub(1) as u16;
+                app.popup_scroll = app.popup_scroll.saturating_add(1).min(max);
                 return ThemeAction::Consumed;
             }
             KeyCode::Char('k') | KeyCode::Up => {

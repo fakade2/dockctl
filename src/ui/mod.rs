@@ -102,14 +102,14 @@ fn draw_right_accordion(frame: &mut Frame, area: Rect, app: &App, config: &Dockc
     let right_panels = PanelId::RIGHT;
     let expanded = app.expanded_right;
 
-    // Build constraints: expanded gets Min(8), collapsed get Length(3)
+    // Build constraints: expanded gets Min(8), collapsed get Length(1)
     let constraints: Vec<Constraint> = right_panels
         .iter()
         .map(|&p| {
             if p == expanded {
                 Constraint::Min(8)
             } else {
-                Constraint::Length(3)
+                Constraint::Length(1)
             }
         })
         .collect();
@@ -356,6 +356,27 @@ pub(crate) fn panel_block(title: &str, number: u8, is_focused: bool) -> Block<'s
         .title(title_line)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
+}
+
+/// Renders a single-line collapsed panel header (no borders, just styled text).
+/// Used for accordion panels that are not expanded.
+pub(crate) fn collapsed_panel_line(title: &str, number: u8, is_focused: bool) -> Line<'static> {
+    let number_style = Style::default().fg(Color::DarkGray);
+    let title_style = if is_focused {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let sep_style = Style::default().fg(Color::DarkGray);
+
+    Line::from(vec![
+        Span::styled("─", sep_style),
+        Span::styled(format!(" [{}]", number), number_style),
+        Span::styled(format!(" {} ", title), title_style),
+        Span::styled("─".repeat(40), sep_style),
+    ])
 }
 
 /// Formats a byte count into a human-readable string (e.g. "1.23 GB").
