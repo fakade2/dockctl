@@ -259,6 +259,31 @@ fn operator_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) -> 
     }
 }
 
+/// All available commands for autocomplete.
+const COMMANDS: &[&str] = &[
+    "containers",
+    "images",
+    "volumes",
+    "networks",
+    "status",
+    "q",
+    "quit",
+    "exit",
+];
+
+/// Find the best autocomplete suggestion for the current input.
+fn autocomplete_suggestion(input: &str) -> Option<&'static str> {
+    if input.is_empty() {
+        return None;
+    }
+    let input_lower = input.to_lowercase();
+    // Exact prefix match — return the first matching command
+    COMMANDS
+        .iter()
+        .find(|cmd| cmd.starts_with(&input_lower))
+        .copied()
+}
+
 fn handle_command_mode(key: KeyEvent, app: &mut App) -> ThemeAction {
     match key.code {
         KeyCode::Esc => {
@@ -271,6 +296,13 @@ fn handle_command_mode(key: KeyEvent, app: &mut App) -> ThemeAction {
             app.operator_command_mode = false;
             app.operator_command_input.clear();
             execute_command(app, &cmd)
+        }
+        // Tab — accept autocomplete suggestion
+        KeyCode::Tab => {
+            if let Some(suggestion) = autocomplete_suggestion(&app.operator_command_input) {
+                app.operator_command_input = suggestion.to_string();
+            }
+            ThemeAction::Consumed
         }
         KeyCode::Backspace => {
             app.operator_command_input.pop();
@@ -624,14 +656,31 @@ fn draw_command_line(frame: &mut Frame, area: Rect, app: &App) {
     let is_filter_focused = app.operator_filter_active;
 
     let line = if is_command_focused {
-        Line::from(vec![
+        let input = &app.operator_command_input;
+        let mut spans = vec![
             Span::styled(":", Style::default().fg(Color::Cyan)),
-            Span::styled(
-                app.operator_command_input.clone(),
-                Style::default().fg(Color::White),
-            ),
-            Span::styled("\u{2588}", Style::default().fg(Color::White)),
-        ])
+            Span::styled(input.clone(), Style::default().fg(Color::White)),
+        ];
+
+        // Ghost text: show autocomplete suggestion after the cursor
+        if let Some(suggestion) = autocomplete_suggestion(input) {
+            if suggestion.len() > input.len() {
+                let ghost = &suggestion[input.len()..];
+                spans.push(Span::styled(
+                    ghost.to_string(),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            // Show Tab hint
+            spans.push(Span::styled(
+                "  Tab↹",
+                Style::default().fg(Color::Rgb(60, 60, 60)),
+            ));
+        }
+
+        // Block cursor
+        spans.push(Span::styled("\u{2588}", Style::default().fg(Color::White)));
+        Line::from(spans)
     } else if is_filter_focused {
         Line::from(vec![
             Span::styled("/", Style::default().fg(Color::Cyan)),
