@@ -235,6 +235,7 @@ pub(super) fn help_lines() -> Vec<String> {
         String::new(),
         "Image Actions (in :images)".into(),
         sep.into(),
+        "p            Pull image (enter reference)".into(),
         "x            Remove image".into(),
         ":pull <ref>  Pull image (e.g. :pull nginx:latest)".into(),
         String::new(),

@@ -155,6 +155,11 @@ pub(super) fn operator_handle_key(
         }
     }
 
+    // Pull input mode — typing an image reference to pull
+    if app.input_mode == crate::app::InputMode::PullInput {
+        return handle_pull_input(key, app);
+    }
+
     // Command mode — typing a : command
     if app.operator_command_mode {
         return handle_command_mode(key, app);
@@ -454,6 +459,11 @@ pub(super) fn operator_handle_key(
         }
 
         // ── Image actions (only when viewing images) ─────
+        (KeyCode::Char('p'), _) if app.operator_resource == "images" => {
+            app.input_mode = crate::app::InputMode::PullInput;
+            app.pull_input.clear();
+            ThemeAction::Consumed
+        }
         (KeyCode::Char('x'), _) if app.operator_resource == "images" => {
             if let Some(id) = app.selected_image_id() {
                 ThemeAction::RemoveImage { id, force: false }
@@ -563,6 +573,35 @@ fn handle_filter_mode(key: KeyEvent, app: &mut App) -> ThemeAction {
         }
         KeyCode::Char(c) => {
             app.operator_filter.push(c);
+            ThemeAction::Consumed
+        }
+        _ => ThemeAction::Consumed,
+    }
+}
+
+fn handle_pull_input(key: KeyEvent, app: &mut App) -> ThemeAction {
+    match key.code {
+        KeyCode::Esc => {
+            app.input_mode = crate::app::InputMode::Normal;
+            app.pull_input.clear();
+            ThemeAction::Consumed
+        }
+        KeyCode::Enter => {
+            let reference = app.pull_input.trim().to_string();
+            app.input_mode = crate::app::InputMode::Normal;
+            app.pull_input.clear();
+            if !reference.is_empty() {
+                ThemeAction::PullImage { reference }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        KeyCode::Backspace => {
+            app.pull_input.pop();
+            ThemeAction::Consumed
+        }
+        KeyCode::Char(c) => {
+            app.pull_input.push(c);
             ThemeAction::Consumed
         }
         _ => ThemeAction::Consumed,
@@ -1039,6 +1078,57 @@ mod tests {
         app.active_panel = PanelId::Images;
         let config = DockctlConfig::default();
         let result = operator_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    #[test]
+    fn p_enters_pull_input_on_images() {
+        let mut app = App::new(false);
+        app.operator_resource = "images".into();
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('p')), &mut app, &config);
+        assert_eq!(app.input_mode, crate::app::InputMode::PullInput);
+    }
+
+    #[test]
+    fn p_not_handled_on_non_images() {
+        let mut app = App::new(false);
+        app.operator_resource = "containers".into();
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('p')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::NotHandled));
+    }
+
+    #[test]
+    fn pull_input_typing_and_submit() {
+        let mut app = App::new(false);
+        app.input_mode = crate::app::InputMode::PullInput;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('n')), &mut app, &config);
+        operator_handle_key(key(KeyCode::Char('g')), &mut app, &config);
+        assert_eq!(app.pull_input, "ng");
+        let result = operator_handle_key(key(KeyCode::Enter), &mut app, &config);
+        assert!(matches!(result, ThemeAction::PullImage { reference } if reference == "ng"));
+        assert_eq!(app.input_mode, crate::app::InputMode::Normal);
+    }
+
+    #[test]
+    fn pull_input_esc_cancels() {
+        let mut app = App::new(false);
+        app.input_mode = crate::app::InputMode::PullInput;
+        app.pull_input = "nginx".into();
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert_eq!(app.input_mode, crate::app::InputMode::Normal);
+        assert!(app.pull_input.is_empty());
+    }
+
+    #[test]
+    fn pull_input_empty_submit_consumed() {
+        let mut app = App::new(false);
+        app.input_mode = crate::app::InputMode::PullInput;
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Enter), &mut app, &config);
         assert!(matches!(result, ThemeAction::Consumed));
     }
 

@@ -115,7 +115,7 @@ fn draw(frame: &mut Frame, app: &App, config: &DockctlConfig) {
     }
 
     // 5. Bottom status bar
-    draw_status_bar(frame, bar_area);
+    draw_status_bar(frame, bar_area, app);
 
     // 6. Popup overlay (if open)
     if app.show_popup {
@@ -197,8 +197,41 @@ fn draw_right_accordion(frame: &mut Frame, area: Rect, app: &App, config: &Dockc
 }
 
 /// Renders the bottom status bar.
-fn draw_status_bar(frame: &mut Frame, area: Rect) {
+fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let version = concat!("dockctl v", env!("CARGO_PKG_VERSION"));
+
+    // Pull input mode — show input bar
+    if app.input_mode == InputMode::PullInput {
+        let spans = vec![
+            Span::styled(" Pull: ", Style::default().fg(Color::Cyan)),
+            Span::styled(app.pull_input.clone(), Style::default().fg(Color::White)),
+            Span::styled("\u{2588}", Style::default().fg(Color::White)),
+        ];
+        let bar =
+            Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Rgb(22, 27, 34)));
+        frame.render_widget(bar, area);
+        return;
+    }
+
+    // Status message — show feedback
+    if let Some(ref msg) = app.status_message {
+        let left_spans = vec![Span::styled(
+            format!(" {}", msg),
+            Style::default().fg(Color::Yellow),
+        )];
+        let left_len: usize = left_spans.iter().map(|s| s.width()).sum();
+        let right_len = version.len() + 1;
+        let padding = (area.width as usize).saturating_sub(left_len + right_len);
+        let mut spans = left_spans;
+        spans.push(Span::raw(" ".repeat(padding)));
+        spans.push(Span::styled(
+            format!("{} ", version),
+            Style::default().fg(Color::DarkGray),
+        ));
+        let bar = Paragraph::new(Line::from(spans));
+        frame.render_widget(bar, area);
+        return;
+    }
 
     let key_style = Style::default().fg(Color::Cyan);
     let label_style = Style::default().fg(Color::DarkGray);
@@ -394,6 +427,32 @@ fn dashboard_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) ->
         return ThemeAction::Consumed;
     }
 
+    // ── Pull input mode ─────────────────────────────────────────────
+    if app.input_mode == InputMode::PullInput {
+        match key.code {
+            KeyCode::Esc => {
+                app.input_mode = InputMode::Normal;
+                app.pull_input.clear();
+            }
+            KeyCode::Enter => {
+                let reference = app.pull_input.trim().to_string();
+                app.input_mode = InputMode::Normal;
+                app.pull_input.clear();
+                if !reference.is_empty() {
+                    return ThemeAction::PullImage { reference };
+                }
+            }
+            KeyCode::Backspace => {
+                app.pull_input.pop();
+            }
+            KeyCode::Char(c) => {
+                app.pull_input.push(c);
+            }
+            _ => {}
+        }
+        return ThemeAction::Consumed;
+    }
+
     // ── Normal mode ────────────────────────────────────────────────
     let is_container_context = app.active_panel == PanelId::Containers;
 
@@ -472,6 +531,11 @@ fn dashboard_handle_key(key: KeyEvent, app: &mut App, config: &DockctlConfig) ->
         },
 
         // ── Image actions (only when image panel is active) ─────
+        (KeyCode::Char('p'), _) if app.active_panel == PanelId::Images => {
+            app.input_mode = InputMode::PullInput;
+            app.pull_input.clear();
+            ThemeAction::Consumed
+        }
         (KeyCode::Char('x'), _) if app.active_panel == PanelId::Images => {
             if let Some(id) = app.selected_image_id() {
                 ThemeAction::RemoveImage { id, force: false }
@@ -572,6 +636,7 @@ fn dashboard_help_lines() -> Vec<String> {
         String::new(),
         "Image Actions (panel 5)".into(),
         sep.into(),
+        "p            Pull image (enter reference)".into(),
         "x            Remove image".into(),
     ]
 }
@@ -1032,6 +1097,69 @@ mod tests {
         let config = DockctlConfig::default();
         let result = dashboard_handle_key(key(KeyCode::Char('x')), &mut app, &config);
         assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    #[test]
+    fn p_on_images_enters_pull_input() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Images;
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('p')), &mut app, &config);
+        assert_eq!(app.input_mode, InputMode::PullInput);
+        assert!(app.pull_input.is_empty());
+    }
+
+    #[test]
+    fn p_on_non_images_not_pull() {
+        let mut app = App::new(false);
+        app.active_panel = PanelId::Containers;
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Char('p')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::NotHandled));
+        assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn pull_input_typing_and_submit() {
+        let mut app = App::new(false);
+        app.input_mode = InputMode::PullInput;
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Char('n')), &mut app, &config);
+        dashboard_handle_key(key(KeyCode::Char('g')), &mut app, &config);
+        assert_eq!(app.pull_input, "ng");
+        let result = dashboard_handle_key(key(KeyCode::Enter), &mut app, &config);
+        assert!(matches!(result, ThemeAction::PullImage { reference } if reference == "ng"));
+        assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn pull_input_esc_cancels() {
+        let mut app = App::new(false);
+        app.input_mode = InputMode::PullInput;
+        app.pull_input = "nginx".into();
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert!(app.pull_input.is_empty());
+    }
+
+    #[test]
+    fn pull_input_empty_submit_consumed() {
+        let mut app = App::new(false);
+        app.input_mode = InputMode::PullInput;
+        let config = DockctlConfig::default();
+        let result = dashboard_handle_key(key(KeyCode::Enter), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    #[test]
+    fn pull_input_backspace() {
+        let mut app = App::new(false);
+        app.input_mode = InputMode::PullInput;
+        app.pull_input = "abc".into();
+        let config = DockctlConfig::default();
+        dashboard_handle_key(key(KeyCode::Backspace), &mut app, &config);
+        assert_eq!(app.pull_input, "ab");
     }
 
     #[test]

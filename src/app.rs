@@ -210,6 +210,7 @@ pub enum AlertLevel {
 pub enum InputMode {
     Normal,
     Search,
+    PullInput,
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +226,7 @@ pub struct App {
     pub expanded_right: PanelId,
     pub input_mode: InputMode,
     pub search_query: String,
+    pub pull_input: String,
 
     // Popup state
     /// Whether the explain/detail popup is open.
@@ -328,6 +330,7 @@ impl App {
             expanded_right: PanelId::Containers,
             input_mode: InputMode::Normal,
             search_query: String::new(),
+            pull_input: String::new(),
 
             show_popup: false,
             popup_content: Vec::new(),
