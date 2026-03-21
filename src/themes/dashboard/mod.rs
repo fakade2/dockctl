@@ -133,8 +133,8 @@ fn draw(frame: &mut Frame, app: &App, config: &DockctlConfig) {
         draw_right_accordion(frame, right_area, app, config);
     }
 
-    // 5. Bottom status bar
-    draw_status_bar(frame, bar_area);
+    // 5. Bottom status bar (context-sensitive shortcuts)
+    draw_status_bar(frame, bar_area, app);
 
     // 6. Popup overlay (if open)
     if app.show_popup {
@@ -236,24 +236,54 @@ fn draw_command_line(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-/// Renders the bottom status bar (shortcuts + version).
-fn draw_status_bar(frame: &mut Frame, area: Rect) {
+/// Renders the bottom status bar (context-sensitive shortcuts + version).
+fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let version = concat!("dockctl v", env!("CARGO_PKG_VERSION"));
 
     let key_style = Style::default().fg(Color::Cyan);
     let label_style = Style::default().fg(Color::DarkGray);
-    let sep_style = Style::default().fg(Color::DarkGray);
 
-    let left_spans = vec![
-        Span::styled(" Explain: ", label_style),
+    let mut left_spans: Vec<Span> = vec![
+        Span::styled(" ", label_style),
         Span::styled("e", key_style),
-        Span::styled(" | ", sep_style),
-        Span::styled("Quit: ", label_style),
-        Span::styled("q", key_style),
-        Span::styled(" | ", sep_style),
-        Span::styled("Keybindings: ", label_style),
-        Span::styled("?", key_style),
+        Span::styled(":explain ", label_style),
     ];
+
+    // Panel-specific shortcuts
+    match app.active_panel {
+        PanelId::Containers => {
+            left_spans.extend(vec![
+                Span::styled("s", key_style),
+                Span::styled(":stop ", label_style),
+                Span::styled("r", key_style),
+                Span::styled(":restart ", label_style),
+                Span::styled("x", key_style),
+                Span::styled(":rm ", label_style),
+                Span::styled("l", key_style),
+                Span::styled(":logs ", label_style),
+                Span::styled("E", key_style),
+                Span::styled(":exec ", label_style),
+            ]);
+        }
+        PanelId::Images => {
+            left_spans.extend(vec![
+                Span::styled("p", key_style),
+                Span::styled(":pull ", label_style),
+                Span::styled("x", key_style),
+                Span::styled(":rm ", label_style),
+            ]);
+        }
+        _ => {}
+    }
+
+    left_spans.extend(vec![
+        Span::styled("/", key_style),
+        Span::styled("search ", label_style),
+        Span::styled("?", key_style),
+        Span::styled("help ", label_style),
+        Span::styled("q", key_style),
+        Span::styled(":quit", label_style),
+    ]);
 
     // Calculate padding to right-align the version string
     let left_len: usize = left_spans.iter().map(|s| s.width()).sum();
