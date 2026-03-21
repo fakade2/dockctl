@@ -55,14 +55,33 @@ impl Theme for DashboardTheme {
 /// bottom status bar, and optional popup overlay.
 fn draw(frame: &mut Frame, app: &App, config: &DockctlConfig) {
     let layout = &config.layout;
-    // 1. Split vertically: main area (fills) + bottom status bar (1 line)
-    let outer = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(frame.area());
+    let has_status_line = app.input_mode == InputMode::PullInput || app.status_message.is_some();
+
+    // 1. Split vertically: main area + optional command line + bottom status bar
+    let outer = if has_status_line {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .split(frame.area())
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(frame.area())
+    };
 
     let main_area = outer[0];
-    let bar_area = outer[1];
+    let bar_area = if has_status_line {
+        // Draw the command/status line
+        draw_command_line(frame, outer[1], app);
+        outer[2]
+    } else {
+        outer[1]
+    };
 
     // 2. Split main area horizontally: left column + right column
     let columns = Layout::default()
@@ -115,7 +134,7 @@ fn draw(frame: &mut Frame, app: &App, config: &DockctlConfig) {
     }
 
     // 5. Bottom status bar
-    draw_status_bar(frame, bar_area, app);
+    draw_status_bar(frame, bar_area);
 
     // 6. Popup overlay (if open)
     if app.show_popup {
@@ -196,42 +215,30 @@ fn draw_right_accordion(frame: &mut Frame, area: Rect, app: &App, config: &Dockc
     }
 }
 
-/// Renders the bottom status bar.
-fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
-    let version = concat!("dockctl v", env!("CARGO_PKG_VERSION"));
-
-    // Pull input mode — show input bar
-    if app.input_mode == InputMode::PullInput {
-        let spans = vec![
+/// Renders the command/status line (shown only when pull input or status message is active).
+fn draw_command_line(frame: &mut Frame, area: Rect, app: &App) {
+    let line = if app.input_mode == InputMode::PullInput {
+        Line::from(vec![
             Span::styled(" Pull: ", Style::default().fg(Color::Cyan)),
             Span::styled(app.pull_input.clone(), Style::default().fg(Color::White)),
             Span::styled("\u{2588}", Style::default().fg(Color::White)),
-        ];
-        let bar =
-            Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Rgb(22, 27, 34)));
-        frame.render_widget(bar, area);
-        return;
-    }
-
-    // Status message — show feedback
-    if let Some(ref msg) = app.status_message {
-        let left_spans = vec![Span::styled(
+        ])
+    } else if let Some(ref msg) = app.status_message {
+        Line::from(Span::styled(
             format!(" {}", msg),
             Style::default().fg(Color::Yellow),
-        )];
-        let left_len: usize = left_spans.iter().map(|s| s.width()).sum();
-        let right_len = version.len() + 1;
-        let padding = (area.width as usize).saturating_sub(left_len + right_len);
-        let mut spans = left_spans;
-        spans.push(Span::raw(" ".repeat(padding)));
-        spans.push(Span::styled(
-            format!("{} ", version),
-            Style::default().fg(Color::DarkGray),
-        ));
-        let bar = Paragraph::new(Line::from(spans));
-        frame.render_widget(bar, area);
-        return;
-    }
+        ))
+    } else {
+        Line::from("")
+    };
+
+    let paragraph = Paragraph::new(line).style(Style::default().bg(Color::Rgb(22, 27, 34)));
+    frame.render_widget(paragraph, area);
+}
+
+/// Renders the bottom status bar (shortcuts + version).
+fn draw_status_bar(frame: &mut Frame, area: Rect) {
+    let version = concat!("dockctl v", env!("CARGO_PKG_VERSION"));
 
     let key_style = Style::default().fg(Color::Cyan);
     let label_style = Style::default().fg(Color::DarkGray);
