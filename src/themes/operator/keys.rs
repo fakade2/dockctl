@@ -155,6 +155,11 @@ pub(super) fn operator_handle_key(
         }
     }
 
+    // Pull input mode — typing an image reference to pull
+    if app.input_mode == crate::app::InputMode::PullInput {
+        return handle_pull_input(key, app);
+    }
+
     // Command mode — typing a : command
     if app.operator_command_mode {
         return handle_command_mode(key, app);
@@ -321,6 +326,7 @@ pub(super) fn operator_handle_key(
                     ":volumes     :vol  :v           Volume list".into(),
                     ":networks    :net  :n           Network list".into(),
                     ":status      :pu               System pulses/dashboard".into(),
+                    ":pull <ref>                      Pull image".into(),
                     ":q           :quit  :exit       Quit dockctl".into(),
                     String::new(),
                     "Navigation".into(),
@@ -452,6 +458,20 @@ pub(super) fn operator_handle_key(
             }
         }
 
+        // ── Image actions (only when viewing images) ─────
+        (KeyCode::Char('p'), _) if app.operator_resource == "images" => {
+            app.input_mode = crate::app::InputMode::PullInput;
+            app.pull_input.clear();
+            ThemeAction::Consumed
+        }
+        (KeyCode::Char('x'), _) if app.operator_resource == "images" => {
+            if let Some(id) = app.selected_image_id() {
+                ThemeAction::RemoveImage { id, force: false }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+
         // ── Container actions (only when viewing containers) ─────
         (KeyCode::Char('s'), _) if app.operator_resource == "containers" => {
             if let Some(id) = app.selected_container_id() {
@@ -553,6 +573,35 @@ fn handle_filter_mode(key: KeyEvent, app: &mut App) -> ThemeAction {
         }
         KeyCode::Char(c) => {
             app.operator_filter.push(c);
+            ThemeAction::Consumed
+        }
+        _ => ThemeAction::Consumed,
+    }
+}
+
+fn handle_pull_input(key: KeyEvent, app: &mut App) -> ThemeAction {
+    match key.code {
+        KeyCode::Esc => {
+            app.input_mode = crate::app::InputMode::Normal;
+            app.pull_input.clear();
+            ThemeAction::Consumed
+        }
+        KeyCode::Enter => {
+            let reference = app.pull_input.trim().to_string();
+            app.input_mode = crate::app::InputMode::Normal;
+            app.pull_input.clear();
+            if !reference.is_empty() {
+                ThemeAction::PullImage { reference }
+            } else {
+                ThemeAction::Consumed
+            }
+        }
+        KeyCode::Backspace => {
+            app.pull_input.pop();
+            ThemeAction::Consumed
+        }
+        KeyCode::Char(c) => {
+            app.pull_input.push(c);
             ThemeAction::Consumed
         }
         _ => ThemeAction::Consumed,
@@ -1000,6 +1049,108 @@ mod tests {
         let config = DockctlConfig::default();
         let result = operator_handle_key(key(KeyCode::Char('s')), &mut app, &config);
         assert!(matches!(result, ThemeAction::NotHandled));
+    }
+
+    // ── Image actions ────────────────────────────────────────────────
+
+    #[test]
+    fn x_returns_remove_image_on_images() {
+        let mut app = App::new(false);
+        app.operator_resource = "images".into();
+        app.active_panel = PanelId::Images;
+        app.images = vec![crate::runtime::ImageSummary {
+            id: "img1".into(),
+            repo_tags: vec!["nginx:latest".into()],
+            repo_digests: vec![],
+            size: 100_000,
+            created: 1700000000,
+            labels: std::collections::HashMap::new(),
+        }];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::RemoveImage { id, force: false } if id == "img1"));
+    }
+
+    #[test]
+    fn x_consumed_when_no_images() {
+        let mut app = App::new(false);
+        app.operator_resource = "images".into();
+        app.active_panel = PanelId::Images;
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    #[test]
+    fn p_enters_pull_input_on_images() {
+        let mut app = App::new(false);
+        app.operator_resource = "images".into();
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('p')), &mut app, &config);
+        assert_eq!(app.input_mode, crate::app::InputMode::PullInput);
+    }
+
+    #[test]
+    fn p_not_handled_on_non_images() {
+        let mut app = App::new(false);
+        app.operator_resource = "containers".into();
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('p')), &mut app, &config);
+        assert!(matches!(result, ThemeAction::NotHandled));
+    }
+
+    #[test]
+    fn pull_input_typing_and_submit() {
+        let mut app = App::new(false);
+        app.input_mode = crate::app::InputMode::PullInput;
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Char('n')), &mut app, &config);
+        operator_handle_key(key(KeyCode::Char('g')), &mut app, &config);
+        assert_eq!(app.pull_input, "ng");
+        let result = operator_handle_key(key(KeyCode::Enter), &mut app, &config);
+        assert!(matches!(result, ThemeAction::PullImage { reference } if reference == "ng"));
+        assert_eq!(app.input_mode, crate::app::InputMode::Normal);
+    }
+
+    #[test]
+    fn pull_input_esc_cancels() {
+        let mut app = App::new(false);
+        app.input_mode = crate::app::InputMode::PullInput;
+        app.pull_input = "nginx".into();
+        let config = DockctlConfig::default();
+        operator_handle_key(key(KeyCode::Esc), &mut app, &config);
+        assert_eq!(app.input_mode, crate::app::InputMode::Normal);
+        assert!(app.pull_input.is_empty());
+    }
+
+    #[test]
+    fn pull_input_empty_submit_consumed() {
+        let mut app = App::new(false);
+        app.input_mode = crate::app::InputMode::PullInput;
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Enter), &mut app, &config);
+        assert!(matches!(result, ThemeAction::Consumed));
+    }
+
+    #[test]
+    fn x_on_images_not_containers() {
+        // When on images resource, x should remove image, not container
+        let mut app = App::new(false);
+        app.operator_resource = "images".into();
+        app.active_panel = PanelId::Images;
+        app.images = vec![crate::runtime::ImageSummary {
+            id: "img1".into(),
+            repo_tags: vec!["nginx:latest".into()],
+            repo_digests: vec![],
+            size: 100_000,
+            created: 1700000000,
+            labels: std::collections::HashMap::new(),
+        }];
+        app.containers = vec![make_container("c1")];
+        let config = DockctlConfig::default();
+        let result = operator_handle_key(key(KeyCode::Char('x')), &mut app, &config);
+        // Should be RemoveImage, not RemoveContainer
+        assert!(matches!(result, ThemeAction::RemoveImage { .. }));
     }
 
     // ── Ctrl+C quits ─────────────────────────────────────────────────

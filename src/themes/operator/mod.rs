@@ -272,8 +272,15 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
 fn draw_command_line(frame: &mut Frame, area: Rect, app: &App) {
     let is_command_focused = app.operator_command_mode;
     let is_filter_focused = app.operator_filter_active;
+    let is_pull_input = app.input_mode == crate::app::InputMode::PullInput;
 
-    let line = if is_command_focused {
+    let line = if is_pull_input {
+        Line::from(vec![
+            Span::styled("Pull: ", Style::default().fg(Color::Cyan)),
+            Span::styled(app.pull_input.clone(), Style::default().fg(Color::White)),
+            Span::styled("\u{2588}", Style::default().fg(Color::White)),
+        ])
+    } else if is_command_focused {
         let input = &app.operator_command_input;
         let mut spans = vec![
             Span::styled(":", Style::default().fg(Color::Cyan)),
@@ -318,6 +325,11 @@ fn draw_command_line(frame: &mut Frame, area: Rect, app: &App) {
             ),
             Span::styled(follow_tag.to_string(), Style::default().fg(Color::Green)),
         ])
+    } else if let Some(ref msg) = app.status_message {
+        Line::from(Span::styled(
+            format!(" {}", msg),
+            Style::default().fg(Color::Yellow),
+        ))
     } else {
         let mut spans = vec![
             Span::styled(":", Style::default().fg(Color::DarkGray)),
@@ -336,7 +348,7 @@ fn draw_command_line(frame: &mut Frame, area: Rect, app: &App) {
         Line::from(spans)
     };
 
-    let bg = if is_command_focused || is_filter_focused {
+    let bg = if is_pull_input || is_command_focused || is_filter_focused {
         Style::default().bg(Color::Rgb(22, 27, 34))
     } else {
         Style::default()
@@ -395,6 +407,13 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled("rm ", label_style),
                 Span::styled("l", key_style),
                 Span::styled("logs ", label_style),
+            ]);
+        } else if app.operator_resource == "images" {
+            s.extend(vec![
+                Span::styled("p", key_style),
+                Span::styled("pull ", label_style),
+                Span::styled("x", key_style),
+                Span::styled("rm ", label_style),
             ]);
         } else if app.operator_resource == "compose" {
             if app.compose_selected_project.is_none() {

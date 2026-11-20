@@ -5,6 +5,7 @@ use anyhow::Result;
 use crate::runtime::{ContainerRuntime, ImageSummary};
 
 /// Business-logic layer for image operations.
+#[derive(Clone)]
 pub struct ImageService {
     runtime: Arc<Box<dyn ContainerRuntime>>,
 }

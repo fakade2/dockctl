@@ -210,6 +210,7 @@ pub enum AlertLevel {
 pub enum InputMode {
     Normal,
     Search,
+    PullInput,
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +226,7 @@ pub struct App {
     pub expanded_right: PanelId,
     pub input_mode: InputMode,
     pub search_query: String,
+    pub pull_input: String,
 
     // Popup state
     /// Whether the explain/detail popup is open.
@@ -306,6 +308,9 @@ pub struct App {
     pub log_view_follow: bool,  // auto-scroll + refresh on tick
     pub log_view_wrap: bool,    // text wrap toggle
 
+    // Status messages (transient feedback to user)
+    pub status_message: Option<String>,
+
     // Lifecycle
     pub should_quit: bool,
 }
@@ -325,6 +330,7 @@ impl App {
             expanded_right: PanelId::Containers,
             input_mode: InputMode::Normal,
             search_query: String::new(),
+            pull_input: String::new(),
 
             show_popup: false,
             popup_content: Vec::new(),
@@ -382,6 +388,8 @@ impl App {
             log_view_h_scroll: 0,
             log_view_follow: false,
             log_view_wrap: false,
+
+            status_message: None,
 
             should_quit: false,
         }
@@ -715,6 +723,7 @@ mod tests {
         assert!(app.popup_content.is_empty());
         assert!(app.popup_title.is_empty());
         assert_eq!(app.popup_scroll, 0);
+        assert!(app.status_message.is_none());
     }
 
     #[test]

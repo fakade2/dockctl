@@ -103,6 +103,9 @@ async fn main() -> Result<()> {
     // Create theme from config
     let theme = themes::create_theme(&config.general.theme);
 
+    // Background pull task: (reference, join_handle, tick_counter)
+    let mut pull_task: Option<(String, tokio::task::JoinHandle<anyhow::Result<()>>, u8)> = None;
+
     // Main loop
     loop {
         // Draw via theme
@@ -111,6 +114,36 @@ async fn main() -> Result<()> {
         // Handle events
         match events.next().await? {
             AppEvent::Tick => {
+                // Check background pull task
+                if let Some((ref reference, ref handle, ref mut ticks)) = pull_task {
+                    if handle.is_finished() {
+                        let (reference, handle, _) = pull_task.take().unwrap();
+                        match handle.await {
+                            Ok(Ok(())) => {
+                                app.status_message =
+                                    Some(format!("Pulled {} successfully", reference));
+                                if let Ok(images) = image_svc.list().await {
+                                    app.images = images;
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                app.status_message = Some(format!("Pull failed: {}", e));
+                            }
+                            Err(e) => {
+                                app.status_message = Some(format!("Pull failed: {}", e));
+                            }
+                        }
+                    } else {
+                        // Animate dots while pulling
+                        *ticks = (*ticks + 1) % 4;
+                        let dots = ".".repeat(*ticks as usize + 1);
+                        app.status_message = Some(format!("Pulling {}{}", reference, dots));
+                    }
+                } else {
+                    // Only clear status messages when no background task is active
+                    app.status_message = None;
+                }
+
                 // Refresh data for the active panel on tick
                 load_panel_data(
                     &mut app,
@@ -224,6 +257,31 @@ async fn main() -> Result<()> {
                             .await
                         {
                             tracing::warn!("Failed to compose restart: {}", e);
+                        }
+                    }
+                    ThemeAction::PullImage { reference } => {
+                        app.status_message = Some(format!("Pulling {}..", reference));
+                        let svc = image_svc.clone();
+                        let ref_clone = reference.clone();
+                        pull_task = Some((
+                            reference,
+                            tokio::spawn(async move { svc.pull(&ref_clone).await }),
+                            0,
+                        ));
+                    }
+                    ThemeAction::RemoveImage { id, force } => {
+                        match image_svc.remove(&id, force).await {
+                            Ok(()) => {
+                                app.status_message = Some("Image removed".to_string());
+                                // Refresh image list immediately
+                                if let Ok(images) = image_svc.list().await {
+                                    app.images = images;
+                                }
+                            }
+                            Err(e) => {
+                                app.status_message = Some(format!("Remove failed: {}", e));
+                                tracing::warn!("Failed to remove image {}: {}", id, e);
+                            }
                         }
                     }
                 }
